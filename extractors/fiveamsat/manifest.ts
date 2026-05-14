@@ -37,6 +37,9 @@ export const manifest: ExtractorManifest = {
   id: "fiveamsat",
   displayName: "Khamsat",
   providesSources: ["fiveamsat"],
+  locationCapabilities: {
+    fiveamsat: { supportedCountryKeys: ["egypt"] },
+  },
   async run(context) {
     if (context.shouldCancel?.()) {
       return { success: true, jobs: [] };
