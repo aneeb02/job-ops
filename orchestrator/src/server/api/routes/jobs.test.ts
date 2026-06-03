@@ -42,6 +42,89 @@ describe.sequential("Jobs API routes", () => {
     expect(typeof filteredBody.data.revision).toBe("string");
   });
 
+  it("searches jobs with all keyword terms across stored fields", async () => {
+    const { createJob } = await import("@server/repositories/jobs");
+    const matchingJob = await createJob({
+      source: "manual",
+      title: "AI Engineer",
+      employer: "Acme",
+      jobUrl: "https://example.com/job/search-match",
+      jobDescription: "Remote platform automation role",
+      skills: "typescript, agents",
+    });
+    await createJob({
+      source: "manual",
+      title: "AI Engineer",
+      employer: "Beta",
+      jobUrl: "https://example.com/job/search-miss",
+      jobDescription: "Office-based platform role",
+    });
+
+    const res = await fetch(`${baseUrl}/api/jobs?view=list&q=remote%20ai`);
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(body.ok).toBe(true);
+    expect(body.data.total).toBe(1);
+    expect(body.data.jobs.map((job: { id: string }) => job.id)).toEqual([
+      matchingJob.id,
+    ]);
+    expect(body.data.jobs[0]).not.toHaveProperty("jobDescription");
+  });
+
+  it("composes advanced jobs list filters", async () => {
+    const { createJob, updateJob } = await import("@server/repositories/jobs");
+    const matchingJob = await createJob({
+      source: "linkedin",
+      title: "BD Sales Contract Lead",
+      employer: "Acme",
+      jobUrl: "https://example.com/job/filter-match",
+      jobDescription: "Remote B2B pipeline role",
+      location: "Berlin remote",
+      salaryMinAmount: 80000,
+      salaryMaxAmount: 100000,
+      isRemote: true,
+      jobType: "contract",
+      jobFunction: "sales",
+    });
+    const wrongSourceJob = await createJob({
+      source: "manual",
+      title: "BD Sales Contract Lead",
+      employer: "Beta",
+      jobUrl: "https://example.com/job/filter-miss",
+      jobDescription: "Remote B2B pipeline role",
+      location: "Berlin remote",
+      salaryMinAmount: 80000,
+      salaryMaxAmount: 100000,
+      isRemote: true,
+      jobType: "contract",
+      jobFunction: "sales",
+    });
+    await updateJob(matchingJob.id, {
+      status: "ready",
+      suitabilityScore: 88,
+      sponsorMatchScore: 85,
+    });
+    await updateJob(wrongSourceJob.id, {
+      status: "ready",
+      suitabilityScore: 88,
+      sponsorMatchScore: 85,
+    });
+
+    const res = await fetch(
+      `${baseUrl}/api/jobs?view=list&status=ready&source=linkedin&remote=remote&location=berlin&salaryMode=between&salaryMin=70000&salaryMax=90000&scoreMin=80&scoreMax=95&sponsor=potential&jobType=contract&jobFunction=sales`,
+    );
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(body.ok).toBe(true);
+    expect(body.data.total).toBe(1);
+    expect(body.data.jobs.map((job: { id: string }) => job.id)).toEqual([
+      matchingJob.id,
+    ]);
+    expect(body.data.byStatus.ready).toBe(2);
+  });
+
   it("supports lightweight and full jobs list views", async () => {
     const { createJob } = await import("@server/repositories/jobs");
     await createJob({
@@ -316,6 +399,16 @@ describe.sequential("Jobs API routes", () => {
 
   it("rejects invalid jobs list view query", async () => {
     const res = await fetch(`${baseUrl}/api/jobs?view=compact`);
+    const body = await res.json();
+
+    expect(res.status).toBe(400);
+    expect(body.ok).toBe(false);
+    expect(body.error.code).toBe("INVALID_REQUEST");
+    expect(typeof body.meta.requestId).toBe("string");
+  });
+
+  it("rejects invalid advanced jobs list filters", async () => {
+    const res = await fetch(`${baseUrl}/api/jobs?source=definitely-not-real`);
     const body = await res.json();
 
     expect(res.status).toBe(400);

@@ -1,4 +1,8 @@
-import type { JobStatus, PostApplicationProvider } from "@shared/types";
+import type {
+  JobStatus,
+  JobsListFilters,
+  PostApplicationProvider,
+} from "@shared/types";
 
 export const queryKeys = {
   designResume: {
@@ -37,8 +41,11 @@ export const queryKeys = {
     all: ["jobs"] as const,
     inProgressBoard: () =>
       [...queryKeys.jobs.all, "in-progress-board"] as const,
-    list: (options?: { statuses?: JobStatus[]; view?: "list" | "full" }) =>
-      [...queryKeys.jobs.all, "list", options ?? {}] as const,
+    list: (options?: {
+      statuses?: JobStatus[];
+      view?: "list" | "full";
+      filters?: JobsListFilters;
+    }) => [...queryKeys.jobs.all, "list", options ?? {}] as const,
     revision: (options?: { statuses?: JobStatus[] }) =>
       [...queryKeys.jobs.all, "revision", options ?? {}] as const,
     detail: (id: string) => [...queryKeys.jobs.all, "detail", id] as const,

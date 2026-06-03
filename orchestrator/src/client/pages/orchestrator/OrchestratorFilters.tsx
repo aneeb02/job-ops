@@ -1,7 +1,7 @@
 import { KbdHint } from "@client/components/KbdHint";
 import { getDisplayKey, SHORTCUTS } from "@client/lib/shortcut-map";
 import type { JobSource } from "@shared/types.js";
-import { Filter, Search } from "lucide-react";
+import { Filter, Search, SlidersHorizontal, X } from "lucide-react";
 import type React from "react";
 import { useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
@@ -38,8 +38,10 @@ import type {
   FilterTab,
   JobDateFilter,
   JobSort,
+  RemoteFilter,
   SalaryFilter,
   SalaryFilterMode,
+  ScoreFilter,
   SponsorFilter,
 } from "./constants";
 import {
@@ -55,8 +57,20 @@ interface OrchestratorFiltersProps {
   onTabChange: (value: FilterTab) => void;
   counts: Record<FilterTab, number>;
   onOpenCommandBar: () => void;
+  searchQuery: string;
+  onSearchQueryChange: (value: string) => void;
   sourceFilter: JobSource | "all";
   onSourceFilterChange: (value: JobSource | "all") => void;
+  remoteFilter: RemoteFilter;
+  onRemoteFilterChange: (value: RemoteFilter) => void;
+  locationFilter: string;
+  onLocationFilterChange: (value: string) => void;
+  scoreFilter: ScoreFilter;
+  onScoreFilterChange: (value: ScoreFilter) => void;
+  jobTypeFilter: string[];
+  onJobTypeFilterChange: (value: string[]) => void;
+  jobFunctionFilter: string[];
+  onJobFunctionFilterChange: (value: string[]) => void;
   sponsorFilter: SponsorFilter;
   onSponsorFilterChange: (value: SponsorFilter) => void;
   salaryFilter: SalaryFilter;
@@ -90,6 +104,18 @@ const salaryModeOptions: Array<{
   { value: "at_least", label: "at least" },
   { value: "at_most", label: "at most" },
   { value: "between", label: "between" },
+];
+
+const remoteOptions: Array<{ value: RemoteFilter; label: string }> = [
+  { value: "all", label: "Any location type" },
+  { value: "remote", label: "Remote" },
+  { value: "onsite", label: "On-site / hybrid" },
+];
+
+const quickRemoteOptions: Array<{ value: RemoteFilter; label: string }> = [
+  { value: "all", label: "Any" },
+  { value: "remote", label: "Remote" },
+  { value: "onsite", label: "On-site" },
 ];
 
 const sortFieldOrder: JobSort["key"][] = [
@@ -185,13 +211,47 @@ const toggleDimension = (
   };
 };
 
+const parseFilterListInput = (value: string): string[] =>
+  Array.from(
+    new Set(
+      value
+        .split(",")
+        .map((token) => token.trim())
+        .filter(Boolean),
+    ),
+  );
+
+const formatFilterListInput = (values: string[]) => values.join(", ");
+
+const parseOptionalNumber = (
+  value: string,
+  options: { min: number; max?: number },
+): number | null => {
+  const parsed = Number.parseFloat(value.trim());
+  if (!Number.isFinite(parsed) || parsed < options.min) return null;
+  if (options.max != null && parsed > options.max) return null;
+  return parsed;
+};
+
 export const OrchestratorFilters: React.FC<OrchestratorFiltersProps> = ({
   activeTab,
   onTabChange,
   counts,
   onOpenCommandBar,
+  searchQuery,
+  onSearchQueryChange,
   sourceFilter,
   onSourceFilterChange,
+  remoteFilter,
+  onRemoteFilterChange,
+  locationFilter,
+  onLocationFilterChange,
+  scoreFilter,
+  onScoreFilterChange,
+  jobTypeFilter,
+  onJobTypeFilterChange,
+  jobFunctionFilter,
+  onJobFunctionFilterChange,
   sponsorFilter,
   onSponsorFilterChange,
   salaryFilter,
@@ -217,6 +277,12 @@ export const OrchestratorFilters: React.FC<OrchestratorFiltersProps> = ({
   const activeFilterCount = useMemo(
     () =>
       Number(sourceFilter !== "all") +
+      Number(searchQuery.trim().length > 0) +
+      Number(remoteFilter !== "all") +
+      Number(locationFilter.trim().length > 0) +
+      Number(scoreFilter.min != null || scoreFilter.max != null) +
+      Number(jobTypeFilter.length > 0) +
+      Number(jobFunctionFilter.length > 0) +
       Number(sponsorFilter !== "all") +
       Number(dateFilter.dimensions.length > 0) +
       Number(
@@ -225,6 +291,13 @@ export const OrchestratorFilters: React.FC<OrchestratorFiltersProps> = ({
       ),
     [
       sourceFilter,
+      searchQuery,
+      remoteFilter,
+      locationFilter,
+      scoreFilter.min,
+      scoreFilter.max,
+      jobTypeFilter.length,
+      jobFunctionFilter.length,
       sponsorFilter,
       dateFilter.dimensions.length,
       salaryFilter.min,
@@ -335,6 +408,22 @@ export const OrchestratorFilters: React.FC<OrchestratorFiltersProps> = ({
                 <div className="min-h-0 flex-1 space-y-4 overflow-y-auto pr-1">
                   <Card>
                     <CardHeader className="pb-3">
+                      <CardTitle>Keywords</CardTitle>
+                    </CardHeader>
+                    <CardContent>
+                      <Input
+                        id="keyword-filter"
+                        value={searchQuery}
+                        onChange={(event) =>
+                          onSearchQueryChange(event.target.value)
+                        }
+                        placeholder="remote AI engineer"
+                      />
+                    </CardContent>
+                  </Card>
+
+                  <Card>
+                    <CardHeader className="pb-3">
                       <CardTitle>Sources</CardTitle>
                     </CardHeader>
                     <CardContent className="flex flex-wrap gap-2">
@@ -359,6 +448,42 @@ export const OrchestratorFilters: React.FC<OrchestratorFiltersProps> = ({
                           {sourceLabel[source]}
                         </Button>
                       ))}
+                    </CardContent>
+                  </Card>
+
+                  <Card>
+                    <CardHeader className="pb-3">
+                      <CardTitle>Location</CardTitle>
+                    </CardHeader>
+                    <CardContent className="space-y-3">
+                      <div className="flex flex-wrap gap-2">
+                        {remoteOptions.map((option) => (
+                          <Button
+                            key={option.value}
+                            type="button"
+                            size="sm"
+                            variant={
+                              remoteFilter === option.value
+                                ? "default"
+                                : "outline"
+                            }
+                            onClick={() => onRemoteFilterChange(option.value)}
+                          >
+                            {option.label}
+                          </Button>
+                        ))}
+                      </div>
+                      <div className="space-y-1">
+                        <Label htmlFor="location-filter">Location text</Label>
+                        <Input
+                          id="location-filter"
+                          value={locationFilter}
+                          onChange={(event) =>
+                            onLocationFilterChange(event.target.value)
+                          }
+                          placeholder="e.g. London, Europe, worldwide"
+                        />
+                      </div>
                     </CardContent>
                   </Card>
 
@@ -493,6 +618,95 @@ export const OrchestratorFilters: React.FC<OrchestratorFiltersProps> = ({
                           {option.label}
                         </Button>
                       ))}
+                    </CardContent>
+                  </Card>
+
+                  <Card>
+                    <CardHeader className="pb-3">
+                      <CardTitle>Role</CardTitle>
+                    </CardHeader>
+                    <CardContent className="space-y-3">
+                      <div className="grid gap-3 md:grid-cols-2">
+                        <div className="space-y-1">
+                          <Label htmlFor="job-type-filter">Job type</Label>
+                          <Input
+                            id="job-type-filter"
+                            value={formatFilterListInput(jobTypeFilter)}
+                            onChange={(event) =>
+                              onJobTypeFilterChange(
+                                parseFilterListInput(event.target.value),
+                              )
+                            }
+                            placeholder="fulltime, contract"
+                          />
+                        </div>
+                        <div className="space-y-1">
+                          <Label htmlFor="job-function-filter">
+                            Job function
+                          </Label>
+                          <Input
+                            id="job-function-filter"
+                            value={formatFilterListInput(jobFunctionFilter)}
+                            onChange={(event) =>
+                              onJobFunctionFilterChange(
+                                parseFilterListInput(event.target.value),
+                              )
+                            }
+                            placeholder="engineering, sales"
+                          />
+                        </div>
+                      </div>
+
+                      <div className="grid gap-3 md:grid-cols-2">
+                        <div className="space-y-1">
+                          <Label htmlFor="score-min-filter">
+                            Minimum score
+                          </Label>
+                          <Input
+                            id="score-min-filter"
+                            value={
+                              scoreFilter.min == null
+                                ? ""
+                                : String(scoreFilter.min)
+                            }
+                            onChange={(event) =>
+                              onScoreFilterChange({
+                                ...scoreFilter,
+                                min: parseOptionalNumber(event.target.value, {
+                                  min: 0,
+                                  max: 100,
+                                }),
+                              })
+                            }
+                            inputMode="numeric"
+                            placeholder="0"
+                          />
+                        </div>
+                        <div className="space-y-1">
+                          <Label htmlFor="score-max-filter">
+                            Maximum score
+                          </Label>
+                          <Input
+                            id="score-max-filter"
+                            value={
+                              scoreFilter.max == null
+                                ? ""
+                                : String(scoreFilter.max)
+                            }
+                            onChange={(event) =>
+                              onScoreFilterChange({
+                                ...scoreFilter,
+                                max: parseOptionalNumber(event.target.value, {
+                                  min: 0,
+                                  max: 100,
+                                }),
+                              })
+                            }
+                            inputMode="numeric"
+                            placeholder="100"
+                          />
+                        </div>
+                      </div>
                     </CardContent>
                   </Card>
 
@@ -711,6 +925,119 @@ export const OrchestratorFilters: React.FC<OrchestratorFiltersProps> = ({
               </div>
             </SheetContent>
           </Sheet>
+        </div>
+      </div>
+
+      <div className="mt-3 rounded-lg border border-border/70 bg-background/95 p-3 shadow-sm">
+        <div className="grid gap-2 xl:grid-cols-[minmax(220px,1.4fr)_minmax(150px,0.75fr)_minmax(220px,0.95fr)_minmax(170px,0.85fr)_minmax(110px,0.5fr)_auto]">
+          <div className="relative min-w-0">
+            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+            <Input
+              value={searchQuery}
+              onChange={(event) => onSearchQueryChange(event.target.value)}
+              aria-label="Keyword search"
+              placeholder="Search title, company, skills, description"
+              className="h-9 pl-9"
+            />
+          </div>
+
+          <Select
+            value={sourceFilter}
+            onValueChange={(value) =>
+              onSourceFilterChange(value as JobSource | "all")
+            }
+          >
+            <SelectTrigger
+              aria-label="Source filter"
+              className="h-9 min-w-0 text-foreground"
+            >
+              <SelectValue placeholder="All sources" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All sources</SelectItem>
+              {visibleSources.map((source) => (
+                <SelectItem key={source} value={source}>
+                  {sourceLabel[source]}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+
+          <fieldset className="grid h-9 grid-cols-3 overflow-hidden rounded-md border border-input bg-background">
+            <legend className="sr-only">Remote filter</legend>
+            {quickRemoteOptions.map((option) => (
+              <Button
+                key={option.value}
+                type="button"
+                variant="ghost"
+                size="sm"
+                className={`h-9 rounded-none border-r border-border/60 px-2 text-xs last:border-r-0 ${
+                  remoteFilter === option.value
+                    ? "bg-primary text-primary-foreground hover:bg-primary/90 hover:text-primary-foreground"
+                    : "text-muted-foreground hover:text-foreground"
+                }`}
+                onClick={() => onRemoteFilterChange(option.value)}
+              >
+                {option.label}
+              </Button>
+            ))}
+          </fieldset>
+
+          <Input
+            value={locationFilter}
+            onChange={(event) => onLocationFilterChange(event.target.value)}
+            aria-label="Location filter"
+            placeholder="Location"
+            className="h-9"
+          />
+
+          <Input
+            value={scoreFilter.min == null ? "" : String(scoreFilter.min)}
+            onChange={(event) =>
+              onScoreFilterChange({
+                ...scoreFilter,
+                min: parseOptionalNumber(event.target.value, {
+                  min: 0,
+                  max: 100,
+                }),
+              })
+            }
+            aria-label="Minimum score filter"
+            inputMode="numeric"
+            placeholder="Score"
+            className="h-9"
+          />
+
+          <div className="flex items-center gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="h-9 w-full gap-1.5 xl:w-auto"
+              onClick={() => onFiltersOpenChange(true)}
+            >
+              <SlidersHorizontal className="h-3.5 w-3.5" />
+              More
+              {activeFilterCount > 0 && (
+                <span className="inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-primary/15 px-1 text-[10px] font-semibold tabular-nums text-primary">
+                  {activeFilterCount}
+                </span>
+              )}
+            </Button>
+
+            {activeFilterCount > 0 && (
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                className="h-9 w-9 shrink-0"
+                onClick={onResetFilters}
+                aria-label="Clear filters"
+              >
+                <X className="h-4 w-4" />
+              </Button>
+            )}
+          </div>
         </div>
       </div>
     </Tabs>

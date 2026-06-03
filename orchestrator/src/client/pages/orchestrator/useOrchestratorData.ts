@@ -4,6 +4,7 @@ import type {
   Job,
   JobListItem,
   JobStatus,
+  JobsListFilters,
   PipelineProgressStep,
 } from "@shared/types";
 import { useQueryClient } from "@tanstack/react-query";
@@ -76,9 +77,32 @@ const buildTerminalSignature = ({
   return `${status}:run:${runId ?? "unknown"}`;
 };
 
-export const useOrchestratorData = (selectedJobId: string | null) => {
+const hasActiveJobsListFilters = (filters: JobsListFilters): boolean =>
+  Boolean(
+    filters.statuses?.length ||
+      filters.query ||
+      filters.sources?.length ||
+      (filters.remote && filters.remote !== "all") ||
+      filters.location ||
+      filters.salaryMin != null ||
+      filters.salaryMax != null ||
+      filters.scoreMin != null ||
+      filters.scoreMax != null ||
+      (filters.sponsor && filters.sponsor !== "all") ||
+      filters.jobTypes?.length ||
+      filters.jobFunctions?.length ||
+      filters.dateDimensions?.length ||
+      filters.includeClosed === false ||
+      filters.sortKey,
+  );
+
+export const useOrchestratorData = (
+  selectedJobId: string | null,
+  filters: JobsListFilters = {},
+) => {
   const queryClient = useQueryClient();
   const [jobListItems, setJobListItems] = useState<JobListItem[]>([]);
+  const [allJobListItems, setAllJobListItems] = useState<JobListItem[]>([]);
   const [selectedJob, setSelectedJob] = useState<Job | null>(null);
   const [stats, setStats] = useState<Record<JobStatus, number>>(initialStats);
   const [isLoading, setIsLoading] = useState(true);
@@ -189,11 +213,24 @@ export const useOrchestratorData = (selectedJobId: string | null) => {
     pendingLoadCountRef.current += 1;
     try {
       setIsLoading(true);
-      const data = await api.getJobs({ view: "list" });
-      queryClient.setQueryData(queryKeys.jobs.list({ view: "list" }), data);
+      const data = await api.getJobs({ view: "list", filters });
+      queryClient.setQueryData(
+        queryKeys.jobs.list({ view: "list", filters }),
+        data,
+      );
+      const allJobsData = hasActiveJobsListFilters(filters)
+        ? await api.getJobs({ view: "list" })
+        : data;
+      if (hasActiveJobsListFilters(filters)) {
+        queryClient.setQueryData(
+          queryKeys.jobs.list({ view: "list" }),
+          allJobsData,
+        );
+      }
       if (seq >= latestAppliedSeqRef.current) {
         latestAppliedSeqRef.current = seq;
         setJobListItems(data.jobs);
+        setAllJobListItems(allJobsData.jobs);
         setStats(data.byStatus);
         lastRevisionRef.current = data.revision;
       }
@@ -208,7 +245,7 @@ export const useOrchestratorData = (selectedJobId: string | null) => {
         setIsLoading(false);
       }
     }
-  }, [queryClient]);
+  }, [filters, queryClient]);
 
   const checkPipelineStatus = useCallback(async () => {
     try {
@@ -430,6 +467,7 @@ export const useOrchestratorData = (selectedJobId: string | null) => {
 
   return {
     jobs: jobListItems,
+    allJobs: allJobListItems,
     selectedJob,
     stats,
     isLoading,

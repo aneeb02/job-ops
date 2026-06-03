@@ -18,12 +18,17 @@ import {
   type PdfFingerprintContext,
   resolvePdfFingerprintContext,
 } from "@server/services/pdf-fingerprint";
+import { isExtractorSourceId } from "@shared/extractors";
 import {
   APPLICATION_OUTCOMES,
   APPLICATION_STAGES,
   type Job,
   type JobListItem,
   type JobStatus,
+  type JobsListDateDimension,
+  type JobsListFilters,
+  type JobsListSortDirection,
+  type JobsListSortKey,
 } from "@shared/types";
 import { z } from "zod";
 
@@ -219,10 +224,116 @@ export const jobActionRequestSchema = z.discriminatedUnion("action", [
   }),
 ]);
 
-export const listJobsQuerySchema = z.object({
-  status: z.string().optional(),
-  view: z.enum(["full", "list"]).optional(),
-});
+const validJobStatuses: JobStatus[] = [
+  "discovered",
+  "processing",
+  "ready",
+  "applied",
+  "in_progress",
+  "skipped",
+  "expired",
+];
+const validDateDimensions: JobsListDateDimension[] = [
+  "ready",
+  "applied",
+  "closed",
+  "discovered",
+];
+const validSortKeys: JobsListSortKey[] = [
+  "date",
+  "discoveredAt",
+  "score",
+  "salary",
+  "title",
+  "employer",
+];
+const validSortDirections: JobsListSortDirection[] = ["asc", "desc"];
+
+const dateInputSchema = z
+  .string()
+  .regex(/^\d{4}-\d{2}-\d{2}$/)
+  .optional();
+
+const commaList = (value: string | undefined): string[] =>
+  Array.from(
+    new Set(
+      (value ?? "")
+        .split(",")
+        .map((token) => token.trim())
+        .filter(Boolean),
+    ),
+  );
+
+export const listJobsQuerySchema = z
+  .object({
+    status: z.string().max(300).optional(),
+    view: z.enum(["full", "list"]).optional(),
+    q: z.string().trim().max(500).optional(),
+    source: z.string().max(500).optional(),
+    remote: z.enum(["all", "remote", "onsite"]).optional(),
+    location: z.string().trim().max(200).optional(),
+    salaryMode: z.enum(["at_least", "at_most", "between"]).optional(),
+    salaryMin: z.coerce.number().int().positive().optional(),
+    salaryMax: z.coerce.number().int().positive().optional(),
+    scoreMin: z.coerce.number().min(0).max(100).optional(),
+    scoreMax: z.coerce.number().min(0).max(100).optional(),
+    sponsor: z
+      .enum(["all", "confirmed", "potential", "not_found", "unknown"])
+      .optional(),
+    jobType: z.string().trim().max(500).optional(),
+    jobFunction: z.string().trim().max(500).optional(),
+    date: z.string().trim().max(200).optional(),
+    appliedStart: dateInputSchema,
+    appliedEnd: dateInputSchema,
+    appliedRange: z.enum(["7", "14", "30", "90", "custom"]).optional(),
+    includeClosed: z.enum(["true", "false"]).optional(),
+    sort: z.string().trim().max(100).optional(),
+  })
+  .superRefine((value, ctx) => {
+    for (const status of commaList(value.status)) {
+      if (!validJobStatuses.includes(status as JobStatus)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["status"],
+          message: `Invalid job status: ${status}`,
+        });
+      }
+    }
+
+    for (const source of commaList(value.source)) {
+      if (!isExtractorSourceId(source)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["source"],
+          message: `Invalid job source: ${source}`,
+        });
+      }
+    }
+
+    for (const dimension of commaList(value.date)) {
+      if (!validDateDimensions.includes(dimension as JobsListDateDimension)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["date"],
+          message: `Invalid date filter: ${dimension}`,
+        });
+      }
+    }
+
+    if (value.sort) {
+      const [key, direction] = value.sort.split("-");
+      if (
+        !validSortKeys.includes(key as JobsListSortKey) ||
+        !validSortDirections.includes(direction as JobsListSortDirection)
+      ) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["sort"],
+          message: `Invalid sort: ${value.sort}`,
+        });
+      }
+    }
+  });
 
 export const jobsRevisionQuerySchema = z.object({
   status: z.string().optional(),
@@ -251,6 +362,41 @@ export function parseStatusFilter(
     | JobStatus[]
     | undefined;
   return parsed && parsed.length > 0 ? parsed : undefined;
+}
+
+export function buildJobsListFilters(
+  query: z.infer<typeof listJobsQuerySchema>,
+): JobsListFilters {
+  const sort = query.sort?.split("-");
+  const filters: JobsListFilters = {
+    statuses: parseStatusFilter(query.status),
+    query: query.q?.trim() || null,
+    sources: commaList(query.source).filter(isExtractorSourceId),
+    remote: query.remote ?? "all",
+    location: query.location?.trim() || null,
+    salaryMode: query.salaryMode ?? "at_least",
+    salaryMin: query.salaryMin ?? null,
+    salaryMax: query.salaryMax ?? null,
+    scoreMin: query.scoreMin ?? null,
+    scoreMax: query.scoreMax ?? null,
+    sponsor: query.sponsor ?? "all",
+    jobTypes: commaList(query.jobType),
+    jobFunctions: commaList(query.jobFunction),
+    dateDimensions: commaList(query.date) as JobsListDateDimension[],
+    dateStart: query.appliedStart ?? null,
+    dateEnd: query.appliedEnd ?? null,
+    includeClosed:
+      query.includeClosed === undefined
+        ? undefined
+        : query.includeClosed === "true",
+  };
+
+  if (sort) {
+    filters.sortKey = sort[0] as JobsListSortKey;
+    filters.sortDirection = sort[1] as JobsListSortDirection;
+  }
+
+  return filters;
 }
 
 export async function requireJob(jobId: string): Promise<Job> {

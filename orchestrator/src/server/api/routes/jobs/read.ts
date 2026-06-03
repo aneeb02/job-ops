@@ -16,6 +16,7 @@ import {
 import { type Request, type Response, Router } from "express";
 import { z } from "zod";
 import {
+  buildJobsListFilters,
   hydrateJobPdfFreshness,
   JOBS_BENCHMARK_ENABLED,
   jobsRevisionQuerySchema,
@@ -61,19 +62,19 @@ jobsReadRouter.get("/", async (req: Request, res: Response) => {
     }
 
     const statusFilter = parsedQuery.data.status;
-    const statuses = parseStatusFilter(statusFilter);
     const view = parsedQuery.data.view ?? "list";
+    const filters = buildJobsListFilters(parsedQuery.data);
 
     const primaryQueryStart = performance.now();
     const pdfFingerprintContext = await resolvePdfFingerprintContext();
     const jobs =
       view === "list"
         ? applyJobsPdfFreshness(
-            await jobsRepo.getJobListItems(statuses),
+            await jobsRepo.searchJobListItems(filters),
             pdfFingerprintContext,
           ).map(toJobListItem)
         : applyJobsPdfFreshness(
-            await jobsRepo.getAllJobs(statuses),
+            await jobsRepo.searchAllJobs(filters),
             pdfFingerprintContext,
           );
     primaryQueryMs = performance.now() - primaryQueryStart;
@@ -83,7 +84,7 @@ jobsReadRouter.get("/", async (req: Request, res: Response) => {
     const stats = await jobsRepo.getJobStats();
     statsAggregateMs = performance.now() - statsAggregateStart;
     const revisionAggregateStart = performance.now();
-    const revision = await jobsRepo.getJobsRevision(statuses);
+    const revision = await jobsRepo.getJobsRevision(filters.statuses);
     revisionAggregateMs = performance.now() - revisionAggregateStart;
 
     const response = {

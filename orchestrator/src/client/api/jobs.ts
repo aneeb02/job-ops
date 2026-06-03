@@ -9,6 +9,7 @@ import type {
   JobListItem,
   JobNote,
   JobOutcome,
+  JobsListFilters,
   JobsListResponse,
   JobsRevisionResponse,
   JobTracerLinksResponse,
@@ -52,21 +53,64 @@ export function getJobs(): Promise<JobsListResponse<JobListItem>>;
 export function getJobs(options: {
   statuses?: string[];
   view?: "list";
+  filters?: JobsListFilters;
 }): Promise<JobsListResponse<JobListItem>>;
 export function getJobs(options?: {
   statuses?: string[];
   view: "full";
+  filters?: JobsListFilters;
 }): Promise<JobsListResponse<Job>>;
 export async function getJobs(options?: {
   statuses?: string[];
   view?: "full" | "list";
+  filters?: JobsListFilters;
 }): Promise<JobsListResponse<Job> | JobsListResponse<JobListItem>> {
+  const filters = options?.filters;
   return fetchApi<JobsListResponse<Job> | JobsListResponse<JobListItem>>(
     withQuery("/jobs", {
-      status: options?.statuses?.length
-        ? options.statuses.join(",")
-        : undefined,
+      status:
+        filters?.statuses?.length || options?.statuses?.length
+          ? (filters?.statuses ?? options?.statuses)?.join(",")
+          : undefined,
       view: options?.view,
+      q: filters?.query || undefined,
+      source: filters?.sources?.length ? filters.sources.join(",") : undefined,
+      remote:
+        filters?.remote && filters.remote !== "all"
+          ? filters.remote
+          : undefined,
+      location: filters?.location || undefined,
+      salaryMode:
+        filters?.salaryMode && filters.salaryMode !== "at_least"
+          ? filters.salaryMode
+          : undefined,
+      salaryMin: filters?.salaryMin ?? undefined,
+      salaryMax: filters?.salaryMax ?? undefined,
+      scoreMin: filters?.scoreMin ?? undefined,
+      scoreMax: filters?.scoreMax ?? undefined,
+      sponsor:
+        filters?.sponsor && filters.sponsor !== "all"
+          ? filters.sponsor
+          : undefined,
+      jobType: filters?.jobTypes?.length
+        ? filters.jobTypes.join(",")
+        : undefined,
+      jobFunction: filters?.jobFunctions?.length
+        ? filters.jobFunctions.join(",")
+        : undefined,
+      date: filters?.dateDimensions?.length
+        ? filters.dateDimensions.join(",")
+        : undefined,
+      appliedStart: filters?.dateStart || undefined,
+      appliedEnd: filters?.dateEnd || undefined,
+      includeClosed:
+        typeof filters?.includeClosed === "boolean"
+          ? String(filters.includeClosed)
+          : undefined,
+      sort:
+        filters?.sortKey && filters.sortDirection
+          ? `${filters.sortKey}-${filters.sortDirection}`
+          : undefined,
     }),
   );
 }

@@ -3,7 +3,7 @@ import {
   EXTRACTOR_SOURCE_METADATA,
   PIPELINE_EXTRACTOR_SOURCE_IDS,
 } from "@shared/extractors";
-import type { JobSource, JobStatus } from "@shared/types";
+import type { JobSource, JobStatus, JobsListRemoteFilter } from "@shared/types";
 
 export const DEFAULT_PIPELINE_SOURCES: JobSource[] = [
   "gradcracker",
@@ -97,9 +97,15 @@ export type SponsorFilter =
   | "not_found"
   | "unknown";
 export type SalaryFilterMode = "at_least" | "at_most" | "between";
+export type RemoteFilter = JobsListRemoteFilter;
 
 export interface SalaryFilter {
   mode: SalaryFilterMode;
+  min: number | null;
+  max: number | null;
+}
+
+export interface ScoreFilter {
   min: number | null;
   max: number | null;
 }

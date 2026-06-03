@@ -8,6 +8,10 @@ import { TrackingInboxPage } from "./TrackingInboxPage";
 const render = (ui: Parameters<typeof renderWithQueryClient>[0]) =>
   renderWithQueryClient(ui);
 
+type InboxItem = Awaited<
+  ReturnType<typeof api.getPostApplicationInbox>
+>["items"][number];
+
 vi.mock("../api", () => ({
   postApplicationProviderStatus: vi.fn(),
   getPostApplicationInbox: vi.fn(),
@@ -22,8 +26,11 @@ vi.mock("../api", () => ({
   postApplicationProviderDisconnect: vi.fn(),
 }));
 
-function makeInboxItem() {
-  return {
+function makeInboxItem(overrides?: {
+  message?: Partial<InboxItem["message"]>;
+  matchedJob?: InboxItem["matchedJob"];
+}): InboxItem {
+  const item: InboxItem = {
     message: {
       id: "msg-1",
       provider: "gmail" as const,
@@ -61,6 +68,18 @@ function makeInboxItem() {
       title: "Software Engineer",
       employer: "Example",
     },
+  };
+
+  return {
+    ...item,
+    message: {
+      ...item.message,
+      ...(overrides?.message ?? {}),
+    },
+    matchedJob:
+      overrides && "matchedJob" in overrides
+        ? (overrides.matchedJob ?? null)
+        : item.matchedJob,
   };
 }
 
@@ -193,6 +212,17 @@ beforeEach(() => {
     items: [makeInboxItem()],
     total: 1,
   });
+  vi.mocked(api.postApplicationProviderSync).mockResolvedValue({
+    provider: "gmail",
+    action: "sync",
+    accountKey: "default",
+    status: {
+      provider: "gmail",
+      accountKey: "default",
+      connected: true,
+      integration: null,
+    },
+  });
 });
 
 describe("TrackingInboxPage", () => {
@@ -204,8 +234,10 @@ describe("TrackingInboxPage", () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByText("Interview invite")).toBeInTheDocument();
+      expect(screen.getAllByText("Interview invite").length).toBeGreaterThan(0);
     });
+    expect(screen.getByText("Review decision")).toBeInTheDocument();
+    expect(screen.getByText("Technical interview")).toBeInTheDocument();
   });
 
   it("submits approve action", async () => {
@@ -216,12 +248,16 @@ describe("TrackingInboxPage", () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByText("Interview invite")).toBeInTheDocument();
+      expect(screen.getAllByText("Interview invite").length).toBeGreaterThan(0);
     });
 
-    fireEvent.click(
-      screen.getByRole("button", { name: "Confirm email-job match" }),
-    );
+    const approveButton = screen.getByRole("button", {
+      name: "Confirm email-job match",
+    });
+    await waitFor(() => {
+      expect(approveButton).not.toBeDisabled();
+    });
+    fireEvent.click(approveButton);
 
     await waitFor(() => {
       expect(api.approvePostApplicationInboxItem).toHaveBeenCalled();
@@ -244,6 +280,106 @@ describe("TrackingInboxPage", () => {
       expect(api.getJobs).toHaveBeenCalledWith({
         statuses: ["applied", "in_progress"],
         view: "list",
+      });
+    });
+  });
+
+  it("does not auto-select the first applied job for unmatched messages", async () => {
+    vi.mocked(api.getPostApplicationInbox).mockResolvedValue({
+      items: [
+        makeInboxItem({
+          message: {
+            matchedJobId: null,
+            matchConfidence: 25,
+            subject: "Can we talk?",
+          },
+          matchedJob: null,
+        }),
+      ],
+      total: 1,
+    });
+
+    render(
+      <MemoryRouter>
+        <TrackingInboxPage />
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getAllByText("Can we talk?").length).toBeGreaterThan(0);
+    });
+
+    expect(screen.getAllByText("No reliable match").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Select a job").length).toBeGreaterThan(0);
+    expect(
+      screen.getByRole("button", { name: "Confirm email-job match" }),
+    ).toBeDisabled();
+  });
+
+  it("does not sync when sync limits are invalid", async () => {
+    render(
+      <MemoryRouter>
+        <TrackingInboxPage />
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getAllByText("Interview invite").length).toBeGreaterThan(0);
+    });
+
+    fireEvent.click(screen.getByText("Inbox settings"));
+    fireEvent.change(screen.getByLabelText("Max Messages"), {
+      target: { value: "0" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Sync" }));
+
+    expect(api.postApplicationProviderSync).not.toHaveBeenCalled();
+  });
+
+  it("opens messages for a sync run", async () => {
+    vi.mocked(api.getPostApplicationRuns).mockResolvedValue({
+      runs: [
+        {
+          id: "run-1",
+          provider: "gmail",
+          accountKey: "default",
+          integrationId: null,
+          status: "completed",
+          startedAt: Date.now(),
+          completedAt: Date.now(),
+          messagesDiscovered: 1,
+          messagesRelevant: 1,
+          messagesClassified: 1,
+          messagesMatched: 1,
+          messagesApproved: 0,
+          messagesDenied: 0,
+          messagesErrored: 0,
+          errorCode: null,
+          errorMessage: null,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        },
+      ],
+      total: 1,
+    });
+
+    render(
+      <MemoryRouter>
+        <TrackingInboxPage />
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("run-1")).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByText("run-1"));
+
+    await waitFor(() => {
+      expect(api.getPostApplicationRunMessages).toHaveBeenCalledWith({
+        runId: "run-1",
+        provider: "gmail",
+        accountKey: "default",
       });
     });
   });

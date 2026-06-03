@@ -14,6 +14,7 @@ import type {
   JobPdfFreshness,
   JobPdfSource,
   JobStatus,
+  JobsListFilters,
   JobsRevisionResponse,
   UpdateJobInput,
   UpdateJobNoteInput,
@@ -24,19 +25,63 @@ import type {
 } from "@shared/types/location";
 import {
   and,
+  asc,
   desc,
   eq,
+  gte,
   inArray,
   isNotNull,
   isNull,
   lt,
+  lte,
   ne,
+  or,
+  type SQL,
+  type SQLWrapper,
   sql,
 } from "drizzle-orm";
 import { db, schema } from "../db/index";
 import { getActiveTenantId } from "../tenancy/context";
 
 const { jobNotes, jobs } = schema;
+
+const jobListItemSelection = {
+  id: jobs.id,
+  source: jobs.source,
+  title: jobs.title,
+  employer: jobs.employer,
+  jobUrl: jobs.jobUrl,
+  applicationLink: jobs.applicationLink,
+  datePosted: jobs.datePosted,
+  deadline: jobs.deadline,
+  salary: jobs.salary,
+  location: jobs.location,
+  status: jobs.status,
+  outcome: jobs.outcome,
+  closedAt: jobs.closedAt,
+  suitabilityScore: jobs.suitabilityScore,
+  sponsorMatchScore: jobs.sponsorMatchScore,
+  pdfPath: jobs.pdfPath,
+  pdfSource: jobs.pdfSource,
+  pdfRegenerating: jobs.pdfRegenerating,
+  pdfFingerprint: jobs.pdfFingerprint,
+  tailoredSummary: jobs.tailoredSummary,
+  tailoredHeadline: jobs.tailoredHeadline,
+  tailoredSkills: jobs.tailoredSkills,
+  selectedProjectIds: jobs.selectedProjectIds,
+  jobDescription: jobs.jobDescription,
+  jobBrief: jobs.jobBrief,
+  tracerLinksEnabled: jobs.tracerLinksEnabled,
+  jobType: jobs.jobType,
+  jobFunction: jobs.jobFunction,
+  salaryMinAmount: jobs.salaryMinAmount,
+  salaryMaxAmount: jobs.salaryMaxAmount,
+  salaryCurrency: jobs.salaryCurrency,
+  discoveredAt: jobs.discoveredAt,
+  readyAt: jobs.readyAt,
+  appliedAt: jobs.appliedAt,
+  updatedAt: jobs.updatedAt,
+} as const;
 
 type AppliedDuplicateMatchCandidate = {
   id: string;
@@ -61,6 +106,16 @@ export type JobListItemWithPdfFreshnessInput = JobListItem &
     | "jobBrief"
     | "tracerLinksEnabled"
   >;
+
+type RawJobListItemRow = Omit<
+  JobListItemWithPdfFreshnessInput,
+  "pdfFreshness" | "pdfSource" | "pdfRegenerating" | "source" | "status"
+> & {
+  source: string;
+  status: string;
+  pdfSource: string | null;
+  pdfRegenerating: boolean | null;
+};
 
 function normalizeStatusFilter(statuses?: JobStatus[]): string | null {
   if (!statuses || statuses.length === 0) return null;
@@ -125,77 +180,285 @@ export async function getJobListItems(
   statuses?: JobStatus[],
 ): Promise<JobListItemWithPdfFreshnessInput[]> {
   const tenantId = getActiveTenantId();
-  const selection = {
-    id: jobs.id,
-    source: jobs.source,
-    title: jobs.title,
-    employer: jobs.employer,
-    jobUrl: jobs.jobUrl,
-    applicationLink: jobs.applicationLink,
-    datePosted: jobs.datePosted,
-    deadline: jobs.deadline,
-    salary: jobs.salary,
-    location: jobs.location,
-    status: jobs.status,
-    outcome: jobs.outcome,
-    closedAt: jobs.closedAt,
-    suitabilityScore: jobs.suitabilityScore,
-    sponsorMatchScore: jobs.sponsorMatchScore,
-    pdfPath: jobs.pdfPath,
-    pdfSource: jobs.pdfSource,
-    pdfRegenerating: jobs.pdfRegenerating,
-    pdfFingerprint: jobs.pdfFingerprint,
-    tailoredSummary: jobs.tailoredSummary,
-    tailoredHeadline: jobs.tailoredHeadline,
-    tailoredSkills: jobs.tailoredSkills,
-    selectedProjectIds: jobs.selectedProjectIds,
-    jobDescription: jobs.jobDescription,
-    jobBrief: jobs.jobBrief,
-    tracerLinksEnabled: jobs.tracerLinksEnabled,
-    jobType: jobs.jobType,
-    jobFunction: jobs.jobFunction,
-    salaryMinAmount: jobs.salaryMinAmount,
-    salaryMaxAmount: jobs.salaryMaxAmount,
-    salaryCurrency: jobs.salaryCurrency,
-    discoveredAt: jobs.discoveredAt,
-    readyAt: jobs.readyAt,
-    appliedAt: jobs.appliedAt,
-    updatedAt: jobs.updatedAt,
-  } as const;
-
   const query =
     statuses && statuses.length > 0
       ? db
-          .select(selection)
+          .select(jobListItemSelection)
           .from(jobs)
           .where(
             and(eq(jobs.tenantId, tenantId), inArray(jobs.status, statuses)),
           )
           .orderBy(desc(jobs.discoveredAt))
       : db
-          .select(selection)
+          .select(jobListItemSelection)
           .from(jobs)
           .where(eq(jobs.tenantId, tenantId))
           .orderBy(desc(jobs.discoveredAt));
 
   const rows = await query;
-  return rows.map((row) => {
-    return {
-      ...row,
-      source: row.source as JobListItem["source"],
-      status: row.status as JobStatus,
-      pdfSource: row.pdfSource as JobPdfSource | null,
-      pdfRegenerating: row.pdfRegenerating ?? false,
-      pdfFreshness: row.pdfRegenerating
-        ? "regenerating"
-        : row.pdfSource === "uploaded"
-          ? "uploaded"
-          : row.pdfPath
-            ? "stale"
-            : ("missing" as JobPdfFreshness),
-      tracerLinksEnabled: row.tracerLinksEnabled ?? false,
-    };
-  });
+  return rows.map(mapRowToJobListItemInput);
+}
+
+const normalizeList = <T extends string>(values?: readonly T[]): T[] =>
+  Array.from(
+    new Set(
+      (values ?? [])
+        .map((value) => value.trim())
+        .filter((value): value is T => value.length > 0),
+    ),
+  );
+
+const escapeLikePattern = (value: string): string =>
+  value.replace(/[\\%_]/g, (match) => `\\${match}`);
+
+const textContains = (column: SQLWrapper, value: string): SQL =>
+  sql`lower(coalesce(${column}, '')) like ${`%${escapeLikePattern(value.toLowerCase())}%`} escape '\\'`;
+
+const textNotContains = (column: SQLWrapper, value: string): SQL =>
+  sql`lower(coalesce(${column}, '')) not like ${`%${escapeLikePattern(value.toLowerCase())}%`} escape '\\'`;
+
+const keywordTerms = (query: string | null | undefined): string[] =>
+  Array.from(
+    new Set(
+      (query ?? "")
+        .trim()
+        .toLowerCase()
+        .split(/\s+/)
+        .map((term) => term.trim())
+        .filter(Boolean),
+    ),
+  ).slice(0, 12);
+
+const dateColumnCondition = (
+  column: SQLWrapper,
+  startDate?: string | null,
+  endDate?: string | null,
+): SQL => {
+  const conditions: SQL[] = [isNotNull(column)];
+  if (startDate) conditions.push(sql`date(${column}) >= ${startDate}`);
+  if (endDate) conditions.push(sql`date(${column}) <= ${endDate}`);
+  return and(...conditions) as SQL;
+};
+
+const closedDateCondition = (
+  startDate?: string | null,
+  endDate?: string | null,
+): SQL => {
+  const conditions: SQL[] = [isNotNull(jobs.closedAt)];
+  if (startDate) {
+    conditions.push(
+      sql`date(datetime(${jobs.closedAt}, 'unixepoch')) >= ${startDate}`,
+    );
+  }
+  if (endDate) {
+    conditions.push(
+      sql`date(datetime(${jobs.closedAt}, 'unixepoch')) <= ${endDate}`,
+    );
+  }
+  return and(...conditions) as SQL;
+};
+
+function buildDateFilterCondition(filters: JobsListFilters): SQL | undefined {
+  const dimensions = normalizeList(filters.dateDimensions);
+  if (dimensions.length === 0) return undefined;
+
+  const conditions: SQL[] = [];
+  for (const dimension of dimensions) {
+    if (dimension === "ready") {
+      conditions.push(
+        dateColumnCondition(jobs.readyAt, filters.dateStart, filters.dateEnd),
+      );
+    } else if (dimension === "applied") {
+      conditions.push(
+        dateColumnCondition(jobs.appliedAt, filters.dateStart, filters.dateEnd),
+      );
+    } else if (dimension === "closed") {
+      conditions.push(closedDateCondition(filters.dateStart, filters.dateEnd));
+    } else if (dimension === "discovered") {
+      conditions.push(
+        dateColumnCondition(
+          jobs.discoveredAt,
+          filters.dateStart,
+          filters.dateEnd,
+        ),
+      );
+    }
+  }
+
+  return conditions.length > 0 ? or(...conditions) : undefined;
+}
+
+function buildJobsWhereClause(filters: JobsListFilters = {}): SQL {
+  const tenantId = getActiveTenantId();
+  const conditions: SQL[] = [eq(jobs.tenantId, tenantId)];
+  const statuses = normalizeList(filters.statuses);
+  const sources = normalizeList(filters.sources);
+  const jobTypes = normalizeList(filters.jobTypes);
+  const jobFunctions = normalizeList(filters.jobFunctions);
+
+  if (statuses.length > 0) conditions.push(inArray(jobs.status, statuses));
+  if (sources.length > 0) conditions.push(inArray(jobs.source, sources));
+  if (jobTypes.length > 0) conditions.push(inArray(jobs.jobType, jobTypes));
+  if (jobFunctions.length > 0) {
+    conditions.push(inArray(jobs.jobFunction, jobFunctions));
+  }
+
+  for (const term of keywordTerms(filters.query)) {
+    const termCondition = or(
+      textContains(jobs.title, term),
+      textContains(jobs.employer, term),
+      textContains(jobs.location, term),
+      textContains(jobs.disciplines, term),
+      textContains(jobs.degreeRequired, term),
+      textContains(jobs.jobDescription, term),
+      textContains(jobs.jobBrief, term),
+      textContains(jobs.jobType, term),
+      textContains(jobs.jobFunction, term),
+      textContains(jobs.companyIndustry, term),
+      textContains(jobs.skills, term),
+      textContains(jobs.workFromHomeType, term),
+      textContains(jobs.source, term),
+    );
+    if (termCondition) conditions.push(termCondition);
+  }
+
+  const location = filters.location?.trim();
+  if (location) {
+    conditions.push(
+      or(
+        textContains(jobs.location, location),
+        textContains(jobs.workFromHomeType, location),
+        textContains(jobs.companyAddresses, location),
+      ) as SQL,
+    );
+  }
+
+  if (filters.remote === "remote") {
+    conditions.push(
+      or(
+        eq(jobs.isRemote, true),
+        textContains(jobs.workFromHomeType, "remote"),
+        textContains(jobs.location, "remote"),
+      ) as SQL,
+    );
+  } else if (filters.remote === "onsite") {
+    conditions.push(
+      and(
+        sql`coalesce(${jobs.isRemote}, 0) = 0`,
+        textNotContains(jobs.workFromHomeType, "remote"),
+        textNotContains(jobs.location, "remote"),
+      ) as SQL,
+    );
+  }
+
+  const hasSalaryMin =
+    typeof filters.salaryMin === "number" && Number.isFinite(filters.salaryMin);
+  const hasSalaryMax =
+    typeof filters.salaryMax === "number" && Number.isFinite(filters.salaryMax);
+  const salaryFloor = sql<number>`coalesce(${jobs.salaryMinAmount}, ${jobs.salaryMaxAmount})`;
+  const salaryCeiling = sql<number>`coalesce(${jobs.salaryMaxAmount}, ${jobs.salaryMinAmount})`;
+
+  if (filters.salaryMode === "at_least" && hasSalaryMin) {
+    conditions.push(gte(salaryCeiling, filters.salaryMin as number));
+  } else if (filters.salaryMode === "at_most" && hasSalaryMax) {
+    conditions.push(lte(salaryFloor, filters.salaryMax as number));
+  } else if (
+    filters.salaryMode === "between" &&
+    (hasSalaryMin || hasSalaryMax)
+  ) {
+    if (hasSalaryMin) {
+      conditions.push(gte(salaryCeiling, filters.salaryMin as number));
+    }
+    if (hasSalaryMax) {
+      conditions.push(lte(salaryFloor, filters.salaryMax as number));
+    }
+  }
+
+  if (
+    typeof filters.scoreMin === "number" &&
+    Number.isFinite(filters.scoreMin)
+  ) {
+    conditions.push(gte(jobs.suitabilityScore, filters.scoreMin));
+  }
+  if (
+    typeof filters.scoreMax === "number" &&
+    Number.isFinite(filters.scoreMax)
+  ) {
+    conditions.push(lte(jobs.suitabilityScore, filters.scoreMax));
+  }
+
+  if (filters.sponsor === "confirmed") {
+    conditions.push(gte(jobs.sponsorMatchScore, 95));
+  } else if (filters.sponsor === "potential") {
+    conditions.push(
+      and(
+        gte(jobs.sponsorMatchScore, 80),
+        lt(jobs.sponsorMatchScore, 95),
+      ) as SQL,
+    );
+  } else if (filters.sponsor === "not_found") {
+    conditions.push(lt(jobs.sponsorMatchScore, 80));
+  } else if (filters.sponsor === "unknown") {
+    conditions.push(isNull(jobs.sponsorMatchScore));
+  }
+
+  const dateCondition = buildDateFilterCondition(filters);
+  if (dateCondition) conditions.push(dateCondition);
+  if (filters.includeClosed === false) conditions.push(isNull(jobs.closedAt));
+
+  return and(...conditions) as SQL;
+}
+
+function buildJobsOrderBy(filters: JobsListFilters = {}): SQL[] {
+  const direction = filters.sortDirection === "asc" ? asc : desc;
+  const nullsLast = (column: SQLWrapper) => sql`${column} is null`;
+
+  if (filters.sortKey === "title") {
+    return [direction(jobs.title), asc(jobs.id)];
+  }
+  if (filters.sortKey === "employer") {
+    return [direction(jobs.employer), asc(jobs.id)];
+  }
+  if (filters.sortKey === "score") {
+    return [
+      nullsLast(jobs.suitabilityScore),
+      direction(jobs.suitabilityScore),
+      asc(jobs.id),
+    ];
+  }
+  if (filters.sortKey === "salary") {
+    const salaryCeiling = sql<number>`coalesce(${jobs.salaryMaxAmount}, ${jobs.salaryMinAmount})`;
+    return [nullsLast(salaryCeiling), direction(salaryCeiling), asc(jobs.id)];
+  }
+  if (filters.sortKey === "date") {
+    const dateValue = sql<string>`coalesce(${jobs.readyAt}, ${jobs.appliedAt}, datetime(${jobs.closedAt}, 'unixepoch'), ${jobs.discoveredAt})`;
+    return [nullsLast(dateValue), direction(dateValue), asc(jobs.id)];
+  }
+  return [direction(jobs.discoveredAt), asc(jobs.id)];
+}
+
+export async function searchAllJobs(
+  filters: JobsListFilters = {},
+): Promise<Job[]> {
+  const rows = await db
+    .select()
+    .from(jobs)
+    .where(buildJobsWhereClause(filters))
+    .orderBy(...buildJobsOrderBy(filters));
+
+  return rows.map(mapRowToJob);
+}
+
+export async function searchJobListItems(
+  filters: JobsListFilters = {},
+): Promise<JobListItemWithPdfFreshnessInput[]> {
+  const rows = await db
+    .select(jobListItemSelection)
+    .from(jobs)
+    .where(buildJobsWhereClause(filters))
+    .orderBy(...buildJobsOrderBy(filters));
+
+  return rows.map(mapRowToJobListItemInput);
 }
 
 export async function getAppliedDuplicateMatchCandidates(): Promise<
@@ -899,6 +1162,26 @@ function mapRowToJob(row: typeof jobs.$inferSelect): Job {
     appliedAt: row.appliedAt,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
+  };
+}
+
+function mapRowToJobListItemInput(
+  row: RawJobListItemRow,
+): JobListItemWithPdfFreshnessInput {
+  return {
+    ...row,
+    source: row.source as JobListItem["source"],
+    status: row.status as JobStatus,
+    pdfSource: row.pdfSource as JobPdfSource | null,
+    pdfRegenerating: row.pdfRegenerating ?? false,
+    pdfFreshness: row.pdfRegenerating
+      ? "regenerating"
+      : row.pdfSource === "uploaded"
+        ? "uploaded"
+        : row.pdfPath
+          ? "stale"
+          : ("missing" as JobPdfFreshness),
+    tracerLinksEnabled: row.tracerLinksEnabled ?? false,
   };
 }
 

@@ -119,6 +119,7 @@ const createMatchMedia = (matches: boolean | Record<string, boolean>) =>
 vi.mock("./orchestrator/useOrchestratorData", () => ({
   useOrchestratorData: () => ({
     jobs: mockJobs,
+    allJobs: mockJobs,
     selectedJob: mockSelectedJob,
     stats: {
       discovered: 1,
@@ -697,7 +698,7 @@ describe("OrchestratorPage", () => {
     );
   });
 
-  it("removes legacy q query params on load", async () => {
+  it("preserves q query params as persistent keyword filters", async () => {
     window.matchMedia = createMatchMedia(
       true,
     ) as unknown as typeof window.matchMedia;
@@ -715,7 +716,7 @@ describe("OrchestratorPage", () => {
     await waitFor(() => {
       const locationText = screen.getByTestId("location").textContent || "";
       expect(locationText).toContain("sort=title-asc");
-      expect(locationText).not.toContain("q=");
+      expect(locationText).toContain("q=backend");
     });
   });
 

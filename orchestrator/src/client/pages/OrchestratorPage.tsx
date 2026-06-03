@@ -1,5 +1,6 @@
 import { useKeyboardAvailability } from "@client/hooks/useKeyboardAvailability";
 import { useSettings } from "@client/hooks/useSettings";
+import type { JobsListFilters } from "@shared/types";
 import type React from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
@@ -37,12 +38,24 @@ export const OrchestratorPage: React.FC = () => {
   const navigate = useNavigate();
   const {
     searchParams,
+    searchQuery,
+    setSearchQuery,
     sourceFilter,
     setSourceFilter,
     sponsorFilter,
     setSponsorFilter,
     salaryFilter,
     setSalaryFilter,
+    remoteFilter,
+    setRemoteFilter,
+    locationFilter,
+    setLocationFilter,
+    scoreFilter,
+    setScoreFilter,
+    jobTypeFilter,
+    setJobTypeFilter,
+    jobFunctionFilter,
+    setJobFunctionFilter,
     dateFilter,
     setDateFilter,
     sort,
@@ -73,6 +86,84 @@ export const OrchestratorPage: React.FC = () => {
 
   const selectedJobId = jobId || null;
   const jobListHandleRef = useRef<VirtualListHandle | null>(null);
+
+  const jobsListFilters = useMemo((): JobsListFilters => {
+    const tabDef = tabs.find((entry) => entry.id === activeTab);
+    return {
+      statuses: tabDef?.statuses.length ? tabDef.statuses : undefined,
+      query: searchQuery || null,
+      sources: sourceFilter === "all" ? undefined : [sourceFilter],
+      remote: remoteFilter,
+      location: locationFilter || null,
+      salaryMode: salaryFilter.mode,
+      salaryMin: salaryFilter.min,
+      salaryMax: salaryFilter.max,
+      scoreMin: scoreFilter.min,
+      scoreMax: scoreFilter.max,
+      sponsor: sponsorFilter,
+      jobTypes: jobTypeFilter,
+      jobFunctions: jobFunctionFilter,
+      dateDimensions: dateFilter.dimensions,
+      dateStart: dateFilter.startDate,
+      dateEnd: dateFilter.endDate,
+      includeClosed:
+        activeTab === "all" && !dateFilter.dimensions.includes("closed")
+          ? false
+          : undefined,
+      sortKey: sort.key,
+      sortDirection: sort.direction,
+    };
+  }, [
+    activeTab,
+    dateFilter.dimensions,
+    dateFilter.endDate,
+    dateFilter.startDate,
+    jobFunctionFilter,
+    jobTypeFilter,
+    locationFilter,
+    remoteFilter,
+    salaryFilter.max,
+    salaryFilter.min,
+    salaryFilter.mode,
+    scoreFilter.max,
+    scoreFilter.min,
+    searchQuery,
+    sort.direction,
+    sort.key,
+    sourceFilter,
+    sponsorFilter,
+  ]);
+  const hasExplicitResultFilters = useMemo(
+    () =>
+      Boolean(
+        searchQuery ||
+          sourceFilter !== "all" ||
+          sponsorFilter !== "all" ||
+          (remoteFilter && remoteFilter !== "all") ||
+          locationFilter ||
+          salaryFilter.min != null ||
+          salaryFilter.max != null ||
+          scoreFilter.min != null ||
+          scoreFilter.max != null ||
+          jobTypeFilter.length > 0 ||
+          jobFunctionFilter.length > 0 ||
+          dateFilter.dimensions.length > 0,
+      ),
+    [
+      dateFilter.dimensions.length,
+      jobFunctionFilter.length,
+      jobTypeFilter.length,
+      locationFilter,
+      remoteFilter,
+      salaryFilter.max,
+      salaryFilter.min,
+      scoreFilter.max,
+      scoreFilter.min,
+      searchQuery,
+      sourceFilter,
+      sponsorFilter,
+    ],
+  );
 
   // Effect to sync URL if it was invalid
   useEffect(() => {
@@ -110,6 +201,7 @@ export const OrchestratorPage: React.FC = () => {
   const demoInfo = useDemoInfo();
   const {
     jobs,
+    allJobs,
     selectedJob,
     stats,
     isLoading,
@@ -118,7 +210,7 @@ export const OrchestratorPage: React.FC = () => {
     pipelineTerminalEvent,
     setIsRefreshPaused,
     loadJobs,
-  } = useOrchestratorData(selectedJobId);
+  } = useOrchestratorData(selectedJobId, jobsListFilters);
   const enabledSources = useMemo(
     () => getEnabledSources(settings ?? null),
     [settings],
@@ -183,9 +275,9 @@ export const OrchestratorPage: React.FC = () => {
     return tabDef.statuses.includes(selectedJob.status) ? selectedJob : null;
   }, [selectedJob, activeTab]);
 
-  const counts = useMemo(() => getJobCounts(jobs), [jobs]);
+  const counts = useMemo(() => getJobCounts(allJobs), [allJobs]);
   const displayedCounts = useMemo(() => counts, [counts]);
-  const sourcesWithJobs = useMemo(() => getSourcesWithJobs(jobs), [jobs]);
+  const sourcesWithJobs = useMemo(() => getSourcesWithJobs(allJobs), [allJobs]);
   const {
     selectedJobIds,
     canSkipSelected,
@@ -278,6 +370,13 @@ export const OrchestratorPage: React.FC = () => {
         "salaryMin",
         "salaryMax",
         "minSalary",
+        "q",
+        "remote",
+        "location",
+        "scoreMin",
+        "scoreMax",
+        "jobType",
+        "jobFunction",
         "date",
         "appliedRange",
         "appliedStart",
@@ -300,6 +399,14 @@ export const OrchestratorPage: React.FC = () => {
       if (selectedJobId) handleSelectJobId(null);
       return;
     }
+    if (
+      hasExplicitResultFilters &&
+      selectedJobId &&
+      !activeJobs.some((job) => job.id === selectedJobId)
+    ) {
+      handleSelectJobId(null);
+      return;
+    }
     if (!selectedJobId) {
       // Auto-select first job ONLY on desktop when nothing is currently selected.
       if (isDesktop) {
@@ -308,6 +415,7 @@ export const OrchestratorPage: React.FC = () => {
     }
   }, [
     activeJobs,
+    hasExplicitResultFilters,
     isLoading,
     selectedJobId,
     isDesktop,
@@ -422,7 +530,7 @@ export const OrchestratorPage: React.FC = () => {
         {/* Main content: tabs/filters -> list/detail */}
         <section className="space-y-4">
           <JobCommandBar
-            jobs={jobs}
+            jobs={allJobs}
             onSelectJob={handleCommandSelectJob}
             open={isCommandBarOpen}
             onOpenChange={setIsCommandBarOpen}
@@ -437,6 +545,18 @@ export const OrchestratorPage: React.FC = () => {
             onFiltersOpenChange={setIsFiltersOpen}
             sourceFilter={sourceFilter}
             onSourceFilterChange={setSourceFilter}
+            searchQuery={searchQuery}
+            onSearchQueryChange={setSearchQuery}
+            remoteFilter={remoteFilter}
+            onRemoteFilterChange={setRemoteFilter}
+            locationFilter={locationFilter}
+            onLocationFilterChange={setLocationFilter}
+            scoreFilter={scoreFilter}
+            onScoreFilterChange={setScoreFilter}
+            jobTypeFilter={jobTypeFilter}
+            onJobTypeFilterChange={setJobTypeFilter}
+            jobFunctionFilter={jobFunctionFilter}
+            onJobFunctionFilterChange={setJobFunctionFilter}
             sponsorFilter={sponsorFilter}
             onSponsorFilterChange={setSponsorFilter}
             salaryFilter={salaryFilter}

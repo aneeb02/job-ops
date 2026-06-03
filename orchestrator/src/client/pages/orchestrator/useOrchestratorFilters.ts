@@ -1,13 +1,15 @@
 import type { JobSource } from "@shared/types.js";
-import { useCallback, useEffect, useMemo } from "react";
+import { useCallback, useMemo } from "react";
 import { useSearchParams } from "react-router-dom";
 import type {
   DateFilterDimension,
   DateFilterPreset,
   JobDateFilter,
   JobSort,
+  RemoteFilter,
   SalaryFilter,
   SalaryFilterMode,
+  ScoreFilter,
   SponsorFilter,
 } from "./constants";
 import { DEFAULT_SORT, dateFilterDimensionOrder } from "./constants";
@@ -24,6 +26,7 @@ const allowedSalaryModes: SalaryFilterMode[] = [
   "at_most",
   "between",
 ];
+const allowedRemoteFilters: RemoteFilter[] = ["all", "remote", "onsite"];
 const allowedSortKeys: JobSort["key"][] = [
   "date",
   "discoveredAt",
@@ -59,19 +62,46 @@ const parseDateDimensions = (value: string | null): DateFilterDimension[] => {
   return dateFilterDimensionOrder.filter((dimension) => seen.has(dimension));
 };
 
+const parseCommaList = (value: string | null): string[] =>
+  Array.from(
+    new Set(
+      (value ?? "")
+        .split(",")
+        .map((token) => token.trim())
+        .filter(Boolean),
+    ),
+  );
+
+const parsePositiveInt = (value: string | null): number | null => {
+  const parsed = value == null ? Number.NaN : Number.parseInt(value, 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+};
+
+const parseScore = (value: string | null): number | null => {
+  const parsed = value == null ? Number.NaN : Number.parseFloat(value);
+  return Number.isFinite(parsed) && parsed >= 0 && parsed <= 100
+    ? parsed
+    : null;
+};
+
 export const useOrchestratorFilters = () => {
   const [searchParams, setSearchParams] = useSearchParams();
 
-  useEffect(() => {
-    if (!searchParams.has("q")) return;
-    setSearchParams(
-      (prev) => {
-        prev.delete("q");
-        return prev;
-      },
-      { replace: true },
-    );
-  }, [searchParams, setSearchParams]);
+  const searchQuery = searchParams.get("q")?.trim() ?? "";
+  const setSearchQuery = useCallback(
+    (value: string) => {
+      setSearchParams(
+        (prev) => {
+          const next = value.trim();
+          if (next) prev.set("q", next);
+          else prev.delete("q");
+          return prev;
+        },
+        { replace: true },
+      );
+    },
+    [setSearchParams],
+  );
 
   const sourceFilter =
     (searchParams.get("source") as JobSource | "all") || "all";
@@ -116,14 +146,10 @@ export const useOrchestratorFilters = () => {
       ? (modeRaw as SalaryFilterMode)
       : "at_least";
 
-    const minRaw =
-      searchParams.get("salaryMin") ?? searchParams.get("minSalary");
-    const minParsed = minRaw == null ? Number.NaN : Number.parseInt(minRaw, 10);
-    const min = Number.isFinite(minParsed) && minParsed > 0 ? minParsed : null;
-
-    const maxRaw = searchParams.get("salaryMax");
-    const maxParsed = maxRaw == null ? Number.NaN : Number.parseInt(maxRaw, 10);
-    const max = Number.isFinite(maxParsed) && maxParsed > 0 ? maxParsed : null;
+    const min = parsePositiveInt(
+      searchParams.get("salaryMin") ?? searchParams.get("minSalary"),
+    );
+    const max = parsePositiveInt(searchParams.get("salaryMax"));
 
     return { mode, min, max };
   }, [searchParams]);
@@ -167,6 +193,106 @@ export const useOrchestratorFilters = () => {
       direction: direction as JobSort["direction"],
     };
   }, [searchParams]);
+
+  const remoteFilter = useMemo((): RemoteFilter => {
+    const raw = searchParams.get("remote") ?? "all";
+    return allowedRemoteFilters.includes(raw as RemoteFilter)
+      ? (raw as RemoteFilter)
+      : "all";
+  }, [searchParams]);
+
+  const setRemoteFilter = useCallback(
+    (value: RemoteFilter) => {
+      setSearchParams(
+        (prev) => {
+          if (value === "all") prev.delete("remote");
+          else prev.set("remote", value);
+          return prev;
+        },
+        { replace: true },
+      );
+    },
+    [setSearchParams],
+  );
+
+  const locationFilter = searchParams.get("location")?.trim() ?? "";
+  const setLocationFilter = useCallback(
+    (value: string) => {
+      setSearchParams(
+        (prev) => {
+          const next = value.trim();
+          if (next) prev.set("location", next);
+          else prev.delete("location");
+          return prev;
+        },
+        { replace: true },
+      );
+    },
+    [setSearchParams],
+  );
+
+  const scoreFilter = useMemo(
+    (): ScoreFilter => ({
+      min: parseScore(searchParams.get("scoreMin")),
+      max: parseScore(searchParams.get("scoreMax")),
+    }),
+    [searchParams],
+  );
+
+  const setScoreFilter = useCallback(
+    (value: ScoreFilter) => {
+      setSearchParams(
+        (prev) => {
+          if (value.min == null) prev.delete("scoreMin");
+          else prev.set("scoreMin", String(value.min));
+
+          if (value.max == null) prev.delete("scoreMax");
+          else prev.set("scoreMax", String(value.max));
+          return prev;
+        },
+        { replace: true },
+      );
+    },
+    [setSearchParams],
+  );
+
+  const jobTypeFilter = useMemo(
+    () => parseCommaList(searchParams.get("jobType")),
+    [searchParams],
+  );
+  const setJobTypeFilter = useCallback(
+    (values: string[]) => {
+      setSearchParams(
+        (prev) => {
+          const next = parseCommaList(values.join(",")).join(",");
+          if (next) prev.set("jobType", next);
+          else prev.delete("jobType");
+          return prev;
+        },
+        { replace: true },
+      );
+    },
+    [setSearchParams],
+  );
+
+  const jobFunctionFilter = useMemo(
+    () => parseCommaList(searchParams.get("jobFunction")),
+    [searchParams],
+  );
+  const setJobFunctionFilter = useCallback(
+    (values: string[]) => {
+      setSearchParams(
+        (prev) => {
+          const next = parseCommaList(values.join(",")).join(",");
+          if (next) prev.set("jobFunction", next);
+          else prev.delete("jobFunction");
+          return prev;
+        },
+        { replace: true },
+      );
+    },
+    [setSearchParams],
+  );
 
   const dateFilter = useMemo((): JobDateFilter => {
     const startDateRaw = searchParams.get("appliedStart");
@@ -245,6 +371,13 @@ export const useOrchestratorFilters = () => {
         prev.delete("salaryMax");
         prev.delete("minSalary");
         prev.delete("sort");
+        prev.delete("q");
+        prev.delete("remote");
+        prev.delete("location");
+        prev.delete("scoreMin");
+        prev.delete("scoreMax");
+        prev.delete("jobType");
+        prev.delete("jobFunction");
         prev.delete("date");
         prev.delete("appliedStart");
         prev.delete("appliedEnd");
@@ -257,12 +390,24 @@ export const useOrchestratorFilters = () => {
 
   return {
     searchParams,
+    searchQuery,
+    setSearchQuery,
     sourceFilter,
     setSourceFilter,
     sponsorFilter,
     setSponsorFilter,
     salaryFilter,
     setSalaryFilter,
+    remoteFilter,
+    setRemoteFilter,
+    locationFilter,
+    setLocationFilter,
+    scoreFilter,
+    setScoreFilter,
+    jobTypeFilter,
+    setJobTypeFilter,
+    jobFunctionFilter,
+    setJobFunctionFilter,
     dateFilter,
     setDateFilter,
     sort,

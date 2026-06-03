@@ -7,11 +7,12 @@ import type {
 import { POST_APPLICATION_PROVIDERS } from "@shared/types";
 import { useQuery } from "@tanstack/react-query";
 import {
-  CheckCircle,
+  CheckCircle2,
   Inbox,
   Link2,
   Loader2,
   RefreshCcw,
+  Settings2,
   Unplug,
   Upload,
   XCircle,
@@ -34,7 +35,6 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   Dialog,
   DialogContent,
@@ -82,6 +82,7 @@ export const TrackingInboxPage: React.FC = () => {
   const [accountKey, setAccountKey] = useState("default");
   const [maxMessages, setMaxMessages] = useState("100");
   const [searchDays, setSearchDays] = useState("90");
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const isDefaultAccountKey = accountKey.trim() === "default";
 
   const [isRefreshing, setIsRefreshing] = useState(false);
@@ -197,7 +198,6 @@ export const TrackingInboxPage: React.FC = () => {
   }, [provider, accountKey]);
 
   useEffect(() => {
-    const defaultAppliedJobId = appliedJobs[0]?.id ?? "";
     setAppliedJobByMessageId((previous) => {
       const next = { ...previous };
       let didChange = false;
@@ -211,9 +211,7 @@ export const TrackingInboxPage: React.FC = () => {
           const hasValidMatchedJob = appliedJobs.some(
             (appliedJob) => appliedJob.id === matchedJobId,
           );
-          const nextJobId = hasValidMatchedJob
-            ? matchedJobId
-            : defaultAppliedJobId;
+          const nextJobId = hasValidMatchedJob ? matchedJobId : "";
           if (next[item.message.id] !== nextJobId) {
             next[item.message.id] = nextJobId;
             didChange = true;
@@ -627,42 +625,93 @@ export const TrackingInboxPage: React.FC = () => {
         title="Tracking Inbox"
         subtitle="Post-application message review"
         actions={
-          <Button
-            size="sm"
-            variant="outline"
-            onClick={() => void refresh()}
-            disabled={isRefreshing || isLoading}
-            className="gap-2"
-          >
-            {isRefreshing ? (
-              <Loader2 className="h-4 w-4 animate-spin" />
-            ) : (
-              <RefreshCcw className="h-4 w-4" />
-            )}
-            Refresh
-          </Button>
+          <>
+            <Button
+              size="sm"
+              onClick={() => void runProviderAction("sync")}
+              disabled={isActionLoading || !isConnected}
+              className="gap-2"
+            >
+              {activeAction === "sync" ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <Upload className="h-4 w-4" />
+              )}
+              {activeAction === "sync" ? "Syncing..." : "Sync"}
+            </Button>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => void refresh()}
+              disabled={isRefreshing || isLoading}
+              className="gap-2"
+            >
+              {isRefreshing ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <RefreshCcw className="h-4 w-4" />
+              )}
+              Refresh
+            </Button>
+          </>
         }
       />
 
-      <PageMain className="space-y-4">
-        <section className="space-y-1 px-1">
-          <div className="flex items-center justify-between">
-            <h1 className="text-2xl font-bold tracking-tight">
-              Application Inbox Matching
-            </h1>
+      <PageMain className="space-y-5">
+        <section className="rounded-lg border border-border/60 bg-card/40 px-4 py-3">
+          <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+            <div className="min-w-0">
+              <h1 className="text-lg font-semibold tracking-tight">
+                Review application replies
+              </h1>
+              <p className="mt-1 text-sm text-muted-foreground">
+                Confirm suggested matches before JobOps updates your application
+                timeline.
+              </p>
+            </div>
+            <div className="flex flex-wrap items-center gap-2 text-sm">
+              <Badge variant={status?.connected ? "default" : "outline"}>
+                {connectionLabel}
+              </Badge>
+              <span className="rounded-md border border-border/60 px-2 py-1 text-xs text-muted-foreground">
+                Pending{" "}
+                <span className="font-semibold text-foreground">
+                  {pendingCount}
+                </span>
+              </span>
+              <span className="rounded-md border border-border/60 px-2 py-1 text-xs text-muted-foreground">
+                Last sync{" "}
+                <span className="font-medium text-foreground">
+                  {formatEpochMs(status?.integration?.lastSyncedAt)}
+                </span>
+              </span>
+            </div>
           </div>
-          <p className="text-sm text-muted-foreground">
-            Connect your inbox to ingest related emails, review the suggested
-            job matches, and approve or deny to automatically update your
-            tracking timeline.
-          </p>
         </section>
 
-        <Card>
-          <CardHeader className="pb-3">
-            <CardTitle className="text-base">Provider Controls</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-4">
+        <details
+          className="group rounded-lg border border-border/60 bg-card/30"
+          open={!isConnected || isSettingsOpen}
+          onToggle={(event) => {
+            if (!isConnected) return;
+            setIsSettingsOpen(event.currentTarget.open);
+          }}
+        >
+          <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-4 py-3 text-sm font-medium [&::-webkit-details-marker]:hidden">
+            <span className="flex items-center gap-2">
+              <Settings2 className="h-4 w-4 text-muted-foreground" />
+              Inbox settings
+              {!isConnected ? (
+                <span className="text-xs font-normal text-muted-foreground">
+                  Connect Gmail to start syncing replies.
+                </span>
+              ) : null}
+            </span>
+            <span className="text-xs text-muted-foreground">
+              {provider} / {accountKey || "default"}
+            </span>
+          </summary>
+          <div className="space-y-4 border-t border-border/60 px-4 py-4">
             <div className="grid gap-3 md:grid-cols-2">
               <div className="space-y-2">
                 <Label htmlFor="provider">Provider</Label>
@@ -729,19 +778,6 @@ export const TrackingInboxPage: React.FC = () => {
                     Connect
                   </Button>
                 ) : null}
-                <Button
-                  onClick={() => void runProviderAction("sync")}
-                  disabled={isActionLoading || !isConnected}
-                  variant="secondary"
-                  className="gap-2"
-                >
-                  {activeAction === "sync" ? (
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                  ) : (
-                    <Upload className="h-4 w-4" />
-                  )}
-                  {activeAction === "sync" ? "Syncing..." : "Sync"}
-                </Button>
                 {isConnected ? (
                   <Button
                     onClick={() => void runProviderAction("disconnect")}
@@ -755,29 +791,19 @@ export const TrackingInboxPage: React.FC = () => {
                 ) : null}
               </div>
             </div>
+          </div>
+        </details>
 
-            <div className="flex flex-wrap items-center gap-3 text-sm">
-              <Badge variant={status?.connected ? "default" : "outline"}>
-                {connectionLabel}
-              </Badge>
-              <span className="text-muted-foreground">
-                Pending review:{" "}
-                <span className="font-semibold">{pendingCount}</span>
-              </span>
-              {status?.integration?.lastSyncedAt ? (
-                <span className="text-muted-foreground">
-                  Last synced: {formatEpochMs(status.integration.lastSyncedAt)}
-                </span>
-              ) : null}
+        <section className="space-y-3">
+          <div className="flex flex-col gap-3 px-1 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <h2 className="text-base font-semibold">Manual review</h2>
+              <p className="text-sm text-muted-foreground">
+                Select a message, confirm the job, then approve or ignore.
+              </p>
             </div>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between pb-3">
-            <CardTitle className="text-base">Pending Review Queue</CardTitle>
             {inbox.length > 0 && (
-              <div className="flex gap-2">
+              <div className="flex flex-wrap gap-2">
                 <Button
                   variant="outline"
                   size="sm"
@@ -785,8 +811,8 @@ export const TrackingInboxPage: React.FC = () => {
                   disabled={isActionLoading}
                   onClick={() => openInboxActionDialog("approve")}
                 >
-                  <CheckCircle className="h-4 w-4" />
-                  Approve All
+                  <CheckCircle2 className="h-4 w-4" />
+                  Approve suggested
                 </Button>
                 <Button
                   variant="outline"
@@ -796,60 +822,104 @@ export const TrackingInboxPage: React.FC = () => {
                   onClick={() => openInboxActionDialog("deny")}
                 >
                   <XCircle className="h-4 w-4" />
-                  Ignore All
+                  Ignore all
                 </Button>
               </div>
             )}
-          </CardHeader>
-          <CardContent>
-            {isLoading ? (
-              <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                <Loader2 className="h-4 w-4 animate-spin" />
-                Loading inbox...
-              </div>
-            ) : inbox.length === 0 ? (
-              <EmptyState
-                title="No pending messages"
-                description="Run sync to ingest new job-application emails."
-              />
-            ) : (
-              <EmailViewerList
-                items={inbox}
-                appliedJobs={appliedJobs}
-                appliedJobByMessageId={appliedJobByMessageId}
-                onAppliedJobChange={handleAppliedJobChange}
-                onDecision={(item, decision) =>
-                  void handleDecision(item, decision, "main_inbox")
-                }
-                isActionLoading={isActionLoading}
-                isAppliedJobsLoading={isAppliedJobsLoading}
-              />
-            )}
-          </CardContent>
-        </Card>
+          </div>
 
-        <Card>
-          <CardHeader className="pb-3">
-            <CardTitle className="text-base">Recent Sync Runs</CardTitle>
-          </CardHeader>
-          <CardContent>
+          {isLoading ? (
+            <div className="flex items-center gap-2 rounded-lg border border-border/60 bg-card/40 px-4 py-6 text-sm text-muted-foreground">
+              <Loader2 className="h-4 w-4 animate-spin" />
+              Loading inbox...
+            </div>
+          ) : inbox.length === 0 ? (
+            <div className="rounded-lg border border-border/60 bg-card/40">
+              <EmptyState
+                title={
+                  isConnected ? "No messages need review" : "Connect Gmail"
+                }
+                description={
+                  isConnected
+                    ? "Run sync to ingest new job-application replies."
+                    : "Connect Gmail in inbox settings before syncing replies."
+                }
+                action={
+                  isConnected ? (
+                    <Button
+                      type="button"
+                      onClick={() => void runProviderAction("sync")}
+                      disabled={isActionLoading}
+                      className="gap-2"
+                    >
+                      {activeAction === "sync" ? (
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                      ) : (
+                        <Upload className="h-4 w-4" />
+                      )}
+                      Sync now
+                    </Button>
+                  ) : (
+                    <Button
+                      type="button"
+                      onClick={() => {
+                        setIsSettingsOpen(true);
+                        void runProviderAction("connect");
+                      }}
+                      disabled={isActionLoading}
+                      className="gap-2"
+                    >
+                      <Link2 className="h-4 w-4" />
+                      Connect Gmail
+                    </Button>
+                  )
+                }
+              />
+            </div>
+          ) : (
+            <EmailViewerList
+              items={inbox}
+              appliedJobs={appliedJobs}
+              appliedJobByMessageId={appliedJobByMessageId}
+              onAppliedJobChange={handleAppliedJobChange}
+              onDecision={(item, decision) =>
+                void handleDecision(item, decision, "main_inbox")
+              }
+              isActionLoading={isActionLoading}
+              isAppliedJobsLoading={isAppliedJobsLoading}
+            />
+          )}
+        </section>
+
+        <section className="rounded-lg border border-border/60 bg-card/25">
+          <div className="border-b border-border/60 px-4 py-3">
+            <h2 className="text-sm font-semibold">Sync activity</h2>
+            <p className="text-xs text-muted-foreground">
+              Recent Gmail sync runs and captured messages.
+            </p>
+          </div>
+          <div className="p-3">
             {runs.length === 0 ? (
-              <p className="text-sm text-muted-foreground">No sync runs yet.</p>
+              <p className="px-1 py-2 text-sm text-muted-foreground">
+                No sync runs yet.
+              </p>
             ) : (
               <div className="space-y-2">
                 {runs.map((run) => (
                   <button
                     key={run.id}
                     type="button"
-                    className="w-full rounded-lg border px-3 py-2 text-left transition-colors hover:bg-muted/30"
+                    className="w-full rounded-md border border-border/60 px-3 py-2 text-left transition-colors hover:bg-muted/30"
                     onClick={() => void handleOpenRunMessages(run)}
                   >
                     <div className="flex flex-wrap items-center justify-between gap-2">
-                      <div className="text-xs text-muted-foreground">
-                        <p>{run.id}</p>
+                      <div className="min-w-0 text-xs text-muted-foreground">
+                        <p className="truncate font-medium text-foreground/80">
+                          {run.id}
+                        </p>
                         <p>{formatEpochMs(run.startedAt)}</p>
                       </div>
-                      <div className="flex items-center gap-2 text-xs">
+                      <div className="flex flex-wrap items-center gap-2 text-xs">
                         <Badge variant="outline">{run.status}</Badge>
                         <span className="text-muted-foreground">
                           discovered {run.messagesDiscovered}
@@ -866,8 +936,8 @@ export const TrackingInboxPage: React.FC = () => {
                 ))}
               </div>
             )}
-          </CardContent>
-        </Card>
+          </div>
+        </section>
       </PageMain>
 
       <Dialog
@@ -926,7 +996,7 @@ export const TrackingInboxPage: React.FC = () => {
           <AlertDialogHeader>
             <AlertDialogTitle>
               {inboxActionDialog.action === "approve"
-                ? "Approve All Messages?"
+                ? "Approve Suggested Messages?"
                 : "Ignore All Messages?"}
             </AlertDialogTitle>
             <AlertDialogDescription>
@@ -945,7 +1015,7 @@ export const TrackingInboxPage: React.FC = () => {
               }}
             >
               {inboxActionDialog.action === "approve"
-                ? "Approve All"
+                ? "Approve Suggested"
                 : "Ignore All"}
             </AlertDialogAction>
           </AlertDialogFooter>

@@ -100,6 +100,13 @@ describe.sequential("Tenant isolation", () => {
       adamJob.id,
     ]);
 
+    const adamFilteredList = await fetch(`${baseUrl}/api/jobs?q=role`, {
+      headers: { Authorization: `Bearer ${adamToken}` },
+    }).then((res) => res.json());
+    expect(
+      adamFilteredList.data.jobs.map((job: { id: string }) => job.id),
+    ).toEqual([adamJob.id]);
+
     const crossTenantJob = await fetch(`${baseUrl}/api/jobs/${adminJob.id}`, {
       headers: { Authorization: `Bearer ${adamToken}` },
     });

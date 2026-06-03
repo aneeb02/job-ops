@@ -284,6 +284,50 @@ export type JobListItem = Pick<
   | "updatedAt"
 >;
 
+export type JobsListRemoteFilter = "all" | "remote" | "onsite";
+export type JobsListSalaryMode = "at_least" | "at_most" | "between";
+export type JobsListSponsorFilter =
+  | "all"
+  | "confirmed"
+  | "potential"
+  | "not_found"
+  | "unknown";
+export type JobsListDateDimension =
+  | "ready"
+  | "applied"
+  | "closed"
+  | "discovered";
+export type JobsListSortKey =
+  | "date"
+  | "discoveredAt"
+  | "score"
+  | "salary"
+  | "title"
+  | "employer";
+export type JobsListSortDirection = "asc" | "desc";
+
+export interface JobsListFilters {
+  statuses?: JobStatus[];
+  query?: string | null;
+  sources?: JobSource[];
+  remote?: JobsListRemoteFilter;
+  location?: string | null;
+  salaryMode?: JobsListSalaryMode;
+  salaryMin?: number | null;
+  salaryMax?: number | null;
+  scoreMin?: number | null;
+  scoreMax?: number | null;
+  sponsor?: JobsListSponsorFilter;
+  jobTypes?: string[];
+  jobFunctions?: string[];
+  dateDimensions?: JobsListDateDimension[];
+  dateStart?: string | null;
+  dateEnd?: string | null;
+  includeClosed?: boolean;
+  sortKey?: JobsListSortKey;
+  sortDirection?: JobsListSortDirection;
+}
+
 export interface CreateJobInput {
   source: JobSource;
   title: string;
