@@ -41,6 +41,7 @@ import {
   sql,
 } from "drizzle-orm";
 import { db, schema } from "../db/index";
+import { createJobDedupeKey } from "../services/job-dedupe";
 import { getActiveTenantId } from "../tenancy/context";
 
 const { jobNotes, jobs } = schema;
@@ -715,6 +716,24 @@ export async function getAllJobUrls(): Promise<string[]> {
   return rows.map((r) => r.jobUrl);
 }
 
+async function getJobByDedupeKey(input: CreateJobInput): Promise<Job | null> {
+  const tenantId = getActiveTenantId();
+  const inputKey = createJobDedupeKey(input);
+  const rows = await db
+    .select({
+      id: jobs.id,
+      title: jobs.title,
+      employer: jobs.employer,
+      location: jobs.location,
+    })
+    .from(jobs)
+    .where(eq(jobs.tenantId, tenantId));
+
+  const match = rows.find((row) => createJobDedupeKey(row) === inputKey);
+  if (!match) return null;
+  return getJobById(match.id);
+}
+
 async function insertJob(input: CreateJobInput): Promise<Job> {
   const id = randomUUID();
   const now = new Date().toISOString();
@@ -804,6 +823,9 @@ export async function createJobs(
   inputOrInputs: CreateJobInput | CreateJobInput[],
 ): Promise<Job | { created: number; skipped: number }> {
   if (!Array.isArray(inputOrInputs)) {
+    const duplicateByKey = await getJobByDedupeKey(inputOrInputs);
+    if (duplicateByKey) return duplicateByKey;
+
     const inserted = await tryInsertJob(inputOrInputs);
     if (inserted) return inserted;
     const existing = await getJobByUrl(inputOrInputs.jobUrl);
@@ -812,6 +834,13 @@ export async function createJobs(
   }
 
   const byUrl = new Map<
+    string,
+    {
+      input: CreateJobInput;
+      count: number;
+    }
+  >();
+  const byDedupeKey = new Map<
     string,
     {
       input: CreateJobInput;
@@ -828,10 +857,22 @@ export async function createJobs(
     }
   }
 
+  for (const item of byUrl.values()) {
+    const dedupeKey = createJobDedupeKey(item.input);
+    const existing = byDedupeKey.get(dedupeKey);
+    if (existing) {
+      existing.count += item.count;
+    } else {
+      byDedupeKey.set(dedupeKey, item);
+    }
+  }
+
   let created = 0;
   let skipped = 0;
 
-  const uniqueUrls = Array.from(byUrl.keys());
+  const uniqueUrls = Array.from(byDedupeKey.values()).map(
+    ({ input }) => input.jobUrl,
+  );
   if (uniqueUrls.length === 0) {
     return { created, skipped };
   }
@@ -846,9 +887,23 @@ export async function createJobs(
       ),
     );
   const existingUrlSet = new Set(existingRows.map((row) => row.jobUrl));
+  const existingJobRows = await db
+    .select({
+      title: jobs.title,
+      employer: jobs.employer,
+      location: jobs.location,
+    })
+    .from(jobs)
+    .where(eq(jobs.tenantId, getActiveTenantId()));
+  const existingDedupeKeys = new Set(
+    existingJobRows.map((row) => createJobDedupeKey(row)),
+  );
 
-  for (const { input, count } of byUrl.values()) {
-    if (existingUrlSet.has(input.jobUrl)) {
+  for (const { input, count } of byDedupeKey.values()) {
+    if (
+      existingUrlSet.has(input.jobUrl) ||
+      existingDedupeKeys.has(createJobDedupeKey(input))
+    ) {
       skipped += count;
       continue;
     }
@@ -861,6 +916,7 @@ export async function createJobs(
 
     created += 1;
     skipped += count - 1;
+    existingDedupeKeys.add(createJobDedupeKey(input));
   }
 
   return { created, skipped };
