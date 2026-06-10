@@ -50,6 +50,12 @@ export const OrchestratorPage: React.FC = () => {
     setSponsorFilter,
     salaryFilter,
     setSalaryFilter,
+    postedWithinDays,
+    setPostedWithinDays,
+    employmentTypes,
+    setEmploymentTypes,
+    location: locationFilter,
+    setLocation: setLocationFilter,
     dateFilter,
     setDateFilter,
     sort,
@@ -224,15 +230,17 @@ export const OrchestratorPage: React.FC = () => {
     },
   });
 
-  const activeJobs = useFilteredJobs(
-    jobs,
+  const activeJobs = useFilteredJobs(jobs, {
     activeTab,
     dateFilter,
     sourceFilter,
     sponsorFilter,
     salaryFilter,
+    postedWithinDays,
+    employmentTypes,
+    location: locationFilter,
     sort,
-  );
+  });
   const setActiveTab = useCallback(
     (newTab: FilterTab) => {
       // Keep selected job if it belongs to the target tab, otherwise clear it.
@@ -520,6 +528,12 @@ export const OrchestratorPage: React.FC = () => {
             onSponsorFilterChange={setSponsorFilter}
             salaryFilter={salaryFilter}
             onSalaryFilterChange={setSalaryFilter}
+            postedWithinDays={postedWithinDays}
+            onPostedWithinChange={setPostedWithinDays}
+            employmentTypes={employmentTypes}
+            onEmploymentTypesChange={setEmploymentTypes}
+            locationFilter={locationFilter}
+            onLocationFilterChange={setLocationFilter}
             dateFilter={dateFilter}
             onDateFilterChange={setDateFilter}
             sourcesWithJobs={sourcesWithJobs}

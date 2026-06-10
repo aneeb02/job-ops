@@ -1,13 +1,32 @@
 import { KbdHint } from "@client/components/KbdHint";
 import { getDisplayKey, SHORTCUTS } from "@client/lib/shortcut-map";
 import type { JobSource } from "@shared/types.js";
-import { Filter, Search } from "lucide-react";
+import {
+  ArrowDownUp,
+  BadgeCheck,
+  Banknote,
+  Briefcase,
+  CalendarDays,
+  ChevronDown,
+  Clock,
+  Globe,
+  MapPin,
+  RotateCcw,
+  Search,
+  X,
+} from "lucide-react";
 import type React from "react";
-import { useMemo, useState } from "react";
+import { useMemo } from "react";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
 import {
   Select,
   SelectContent,
@@ -15,15 +34,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Separator } from "@/components/ui/separator";
-import {
-  Sheet,
-  SheetContent,
-  SheetDescription,
-  SheetHeader,
-  SheetTitle,
-  SheetTrigger,
-} from "@/components/ui/sheet";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   Tooltip,
@@ -32,10 +42,11 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { bucketCount, trackProductEvent } from "@/lib/analytics";
-import { sourceLabel } from "@/lib/utils";
+import { cn, sourceLabel } from "@/lib/utils";
 import type {
   DateFilterDimension,
   DateFilterPreset,
+  EmploymentType,
   FilterTab,
   JobDateFilter,
   JobSort,
@@ -47,7 +58,9 @@ import {
   dateFilterDimensionLabels,
   dateFilterDimensionOrder,
   defaultSortDirection,
+  employmentTypeOptions,
   orderedFilterSources,
+  postedWithinOptions,
   tabs,
 } from "./constants";
 
@@ -62,6 +75,12 @@ interface OrchestratorFiltersProps {
   onSponsorFilterChange: (value: SponsorFilter) => void;
   salaryFilter: SalaryFilter;
   onSalaryFilterChange: (value: SalaryFilter) => void;
+  postedWithinDays: number | null;
+  onPostedWithinChange: (value: number | null) => void;
+  employmentTypes: EmploymentType[];
+  onEmploymentTypesChange: (value: EmploymentType[]) => void;
+  locationFilter: string;
+  onLocationFilterChange: (value: string) => void;
   dateFilter: JobDateFilter;
   onDateFilterChange: (value: JobDateFilter) => void;
   sourcesWithJobs: JobSource[];
@@ -69,6 +88,8 @@ interface OrchestratorFiltersProps {
   onSortChange: (sort: JobSort) => void;
   onResetFilters: () => void;
   filteredCount: number;
+  // Retained for API compatibility with the page; filters are now inline and
+  // always visible, so these are no longer used to drive a slide-out panel.
   isFiltersOpen?: boolean;
   onFiltersOpenChange?: (open: boolean) => void;
 }
@@ -186,6 +207,70 @@ const toggleDimension = (
   };
 };
 
+const formatMoney = (value: number) => value.toLocaleString();
+
+/** Trigger button shared by every filter dropdown ("faceted filter" style). */
+interface FilterPillProps {
+  icon: React.ReactNode;
+  label: string;
+  active: boolean;
+  /** Short value shown inline on the trigger when the filter is active. */
+  summary?: string | null;
+  /** Numeric badge shown when several values are selected. */
+  badge?: number;
+  contentClassName?: string;
+  children: React.ReactNode;
+}
+
+const FilterPill: React.FC<FilterPillProps> = ({
+  icon,
+  label,
+  active,
+  summary,
+  badge,
+  contentClassName,
+  children,
+}) => (
+  <Popover>
+    <PopoverTrigger asChild>
+      <Button
+        type="button"
+        variant="outline"
+        size="sm"
+        className={cn(
+          "h-9 gap-1.5 rounded-full border-dashed text-xs font-medium text-muted-foreground",
+          active &&
+            "border-solid border-primary/50 bg-primary/5 text-foreground",
+        )}
+      >
+        <span className="[&_svg]:h-3.5 [&_svg]:w-3.5 [&_svg]:opacity-70">
+          {icon}
+        </span>
+        <span>{label}</span>
+        {summary ? (
+          <span className="max-w-[10rem] truncate font-semibold text-foreground">
+            {summary}
+          </span>
+        ) : null}
+        {typeof badge === "number" && badge > 0 ? (
+          <span className="inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-primary/20 px-1 text-[10px] font-semibold tabular-nums text-primary">
+            {badge}
+          </span>
+        ) : null}
+        <ChevronDown className="h-3.5 w-3.5 opacity-50" />
+      </Button>
+    </PopoverTrigger>
+    <PopoverContent align="start" className={cn("w-64", contentClassName)}>
+      <div className="space-y-3">
+        <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+          {label}
+        </p>
+        {children}
+      </div>
+    </PopoverContent>
+  </Popover>
+);
+
 export const OrchestratorFilters: React.FC<OrchestratorFiltersProps> = ({
   activeTab,
   onTabChange,
@@ -197,6 +282,12 @@ export const OrchestratorFilters: React.FC<OrchestratorFiltersProps> = ({
   onSponsorFilterChange,
   salaryFilter,
   onSalaryFilterChange,
+  postedWithinDays,
+  onPostedWithinChange,
+  employmentTypes,
+  onEmploymentTypesChange,
+  locationFilter,
+  onLocationFilterChange,
   dateFilter,
   onDateFilterChange,
   sourcesWithJobs,
@@ -204,32 +295,32 @@ export const OrchestratorFilters: React.FC<OrchestratorFiltersProps> = ({
   onSortChange,
   onResetFilters,
   filteredCount,
-  isFiltersOpen: isFiltersOpenProp,
-  onFiltersOpenChange: onFiltersOpenChangeProp,
 }) => {
-  const [internalOpen, setInternalOpen] = useState(false);
-  const isFiltersOpen = isFiltersOpenProp ?? internalOpen;
-  const onFiltersOpenChange = onFiltersOpenChangeProp ?? setInternalOpen;
-
   const visibleSources = orderedFilterSources.filter((source) =>
     sourcesWithJobs.includes(source),
   );
+
+  const salaryActive =
+    (typeof salaryFilter.min === "number" && salaryFilter.min > 0) ||
+    (typeof salaryFilter.max === "number" && salaryFilter.max > 0);
 
   const activeFilterCount = useMemo(
     () =>
       Number(sourceFilter !== "all") +
       Number(sponsorFilter !== "all") +
       Number(dateFilter.dimensions.length > 0) +
-      Number(
-        (typeof salaryFilter.min === "number" && salaryFilter.min > 0) ||
-          (typeof salaryFilter.max === "number" && salaryFilter.max > 0),
-      ),
+      Number(postedWithinDays != null) +
+      Number(employmentTypes.length > 0) +
+      Number(locationFilter.trim() !== "") +
+      Number(salaryActive),
     [
       sourceFilter,
       sponsorFilter,
       dateFilter.dimensions.length,
-      salaryFilter.min,
-      salaryFilter.max,
+      postedWithinDays,
+      employmentTypes.length,
+      locationFilter,
+      salaryActive,
     ],
   );
 
@@ -238,6 +329,31 @@ export const OrchestratorFilters: React.FC<OrchestratorFiltersProps> = ({
   const showSalaryMax =
     salaryFilter.mode === "at_most" || salaryFilter.mode === "between";
   const commandShortcutLabel = getDisplayKey(SHORTCUTS.search);
+
+  const postedWithinLabel =
+    postedWithinOptions.find((option) => option.value === postedWithinDays)
+      ?.label ?? null;
+  const sponsorLabel =
+    sponsorFilter === "all"
+      ? null
+      : (sponsorOptions.find((option) => option.value === sponsorFilter)
+          ?.label ?? null);
+  const sortDirectionLabel = getDirectionOptions(sort.key).find(
+    (option) => option.value === sort.direction,
+  )?.label;
+
+  let salarySummary: string | null = null;
+  if (salaryActive) {
+    if (salaryFilter.mode === "between") {
+      salarySummary = `${salaryFilter.min ? formatMoney(salaryFilter.min) : "0"}–${
+        salaryFilter.max ? formatMoney(salaryFilter.max) : "∞"
+      }`;
+    } else if (salaryFilter.mode === "at_most" && salaryFilter.max) {
+      salarySummary = `≤ ${formatMoney(salaryFilter.max)}`;
+    } else if (salaryFilter.min) {
+      salarySummary = `≥ ${formatMoney(salaryFilter.min)}`;
+    }
+  }
 
   const applySortChange = (nextSort: JobSort) => {
     if (nextSort.key === sort.key && nextSort.direction === sort.direction) {
@@ -255,56 +371,119 @@ export const OrchestratorFilters: React.FC<OrchestratorFiltersProps> = ({
     onSortChange(nextSort);
   };
 
+  const clearDateFilter = () =>
+    onDateFilterChange({
+      dimensions: [],
+      startDate: null,
+      endDate: null,
+      preset: null,
+    });
+
+  // Removable summary of every active filter, shown as chips under the bar.
+  const activeChips: Array<{
+    id: string;
+    label: string;
+    onRemove: () => void;
+  }> = [];
+  if (sourceFilter !== "all") {
+    activeChips.push({
+      id: "source",
+      label: `Source: ${sourceLabel[sourceFilter]}`,
+      onRemove: () => onSourceFilterChange("all"),
+    });
+  }
+  if (postedWithinDays != null) {
+    activeChips.push({
+      id: "posted",
+      label: `Posted: ${postedWithinLabel}`,
+      onRemove: () => onPostedWithinChange(null),
+    });
+  }
+  for (const type of employmentTypes) {
+    const label =
+      employmentTypeOptions.find((option) => option.value === type)?.label ??
+      type;
+    activeChips.push({
+      id: `employment-${type}`,
+      label,
+      onRemove: () =>
+        onEmploymentTypesChange(employmentTypes.filter((t) => t !== type)),
+    });
+  }
+  if (dateFilter.dimensions.length > 0) {
+    activeChips.push({
+      id: "dates",
+      label: `Dates (${dateFilter.dimensions.length})`,
+      onRemove: clearDateFilter,
+    });
+  }
+  if (sponsorLabel) {
+    activeChips.push({
+      id: "sponsor",
+      label: `Sponsor: ${sponsorLabel}`,
+      onRemove: () => onSponsorFilterChange("all"),
+    });
+  }
+  if (salaryActive && salarySummary) {
+    activeChips.push({
+      id: "salary",
+      label: `Salary ${salarySummary}`,
+      onRemove: () =>
+        onSalaryFilterChange({ ...salaryFilter, min: null, max: null }),
+    });
+  }
+
   return (
     <Tabs
       value={activeTab}
       onValueChange={(value) => onTabChange(value as FilterTab)}
     >
-      <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-        <TooltipProvider delayDuration={0}>
-          <TabsList className="h-auto w-full flex-wrap justify-start gap-1 lg:w-auto">
-            {tabs.map((tab, index) => {
-              const description = tabDescriptions[tab.id];
-              const trigger = (
-                <TabsTrigger
-                  key={tab.id}
-                  value={tab.id}
-                  className="flex-1 flex items-center lg:flex-none gap-1.5"
-                >
-                  <KbdHint shortcut={String(index + 1)} className="mr-0.5" />
-                  <span>{tab.label}</span>
-                  {counts[tab.id] > 0 && (
-                    <span className="text-[10px] mt-[2px] tabular-nums opacity-60">
-                      {counts[tab.id]}
-                    </span>
-                  )}
-                </TabsTrigger>
-              );
+      <div className="space-y-3">
+        {/* Row 1: tabs + search */}
+        <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+          <TooltipProvider delayDuration={0}>
+            <TabsList className="h-auto w-full flex-wrap justify-start gap-1 lg:w-auto">
+              {tabs.map((tab, index) => {
+                const description = tabDescriptions[tab.id];
+                const trigger = (
+                  <TabsTrigger
+                    key={tab.id}
+                    value={tab.id}
+                    className="flex-1 flex items-center lg:flex-none gap-1.5"
+                  >
+                    <KbdHint shortcut={String(index + 1)} className="mr-0.5" />
+                    <span>{tab.label}</span>
+                    {counts[tab.id] > 0 && (
+                      <span className="text-[10px] mt-[2px] tabular-nums opacity-60">
+                        {counts[tab.id]}
+                      </span>
+                    )}
+                  </TabsTrigger>
+                );
 
-              if (!description) {
-                return trigger;
-              }
+                if (!description) {
+                  return trigger;
+                }
 
-              return (
-                <Tooltip key={tab.id}>
-                  <TooltipTrigger asChild>{trigger}</TooltipTrigger>
-                  <TooltipContent className="max-w-xs text-center">
-                    <p>{description}</p>
-                  </TooltipContent>
-                </Tooltip>
-              );
-            })}
-          </TabsList>
-        </TooltipProvider>
+                return (
+                  <Tooltip key={tab.id}>
+                    <TooltipTrigger asChild>{trigger}</TooltipTrigger>
+                    <TooltipContent className="max-w-xs text-center">
+                      <p>{description}</p>
+                    </TooltipContent>
+                  </Tooltip>
+                );
+              })}
+            </TabsList>
+          </TooltipProvider>
 
-        <div className="flex lg:flex-nowrap flex-wrap items-center justify-end gap-2">
           <Button
             type="button"
             variant="ghost"
             size="sm"
             onClick={onOpenCommandBar}
             aria-label="Search jobs"
-            className="h-8 gap-1.5 text-xs text-muted-foreground hover:text-foreground w-auto"
+            className="h-8 gap-1.5 self-start text-xs text-muted-foreground hover:text-foreground lg:self-auto"
           >
             <Search className="h-3.5 w-3.5" />
             Search
@@ -312,423 +491,475 @@ export const OrchestratorFilters: React.FC<OrchestratorFiltersProps> = ({
               {commandShortcutLabel}
             </span>
           </Button>
+        </div>
 
-          <Sheet open={isFiltersOpen} onOpenChange={onFiltersOpenChange}>
-            <SheetTrigger asChild>
-              <Button
-                variant="ghost"
-                size="sm"
-                className="h-8 gap-1.5 text-xs text-muted-foreground hover:text-foreground w-auto"
+        {/* Row 2: inline filter bar (always visible) */}
+        <div className="flex flex-wrap items-center gap-2">
+          {/* Location — live inline input, no extra click needed */}
+          <div className="relative">
+            <MapPin className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+            <Input
+              aria-label="Filter by location"
+              value={locationFilter}
+              onChange={(event) => onLocationFilterChange(event.target.value)}
+              placeholder="Location"
+              className={cn(
+                "h-9 w-[180px] rounded-full pl-8 text-xs",
+                locationFilter.trim() && "pr-8",
+              )}
+            />
+            {locationFilter.trim() ? (
+              <button
+                type="button"
+                aria-label="Clear location"
+                onClick={() => onLocationFilterChange("")}
+                className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
               >
-                <Filter className="h-3.5 w-3.5" />
-                Filters
-                {activeFilterCount > 0 && (
-                  <span className="inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-primary/20 px-1 text-[10px] font-semibold tabular-nums text-primary">
-                    {activeFilterCount}
-                  </span>
-                )}
+                <X className="h-3.5 w-3.5" />
+              </button>
+            ) : null}
+          </div>
+
+          <FilterPill
+            icon={<Globe />}
+            label="Source"
+            active={sourceFilter !== "all"}
+            summary={sourceFilter === "all" ? null : sourceLabel[sourceFilter]}
+            contentClassName="w-72"
+          >
+            <div className="flex flex-wrap gap-2">
+              <Button
+                type="button"
+                size="sm"
+                variant={sourceFilter === "all" ? "default" : "outline"}
+                onClick={() => onSourceFilterChange("all")}
+              >
+                All sources
               </Button>
-            </SheetTrigger>
+              {visibleSources.map((source) => (
+                <Button
+                  key={source}
+                  type="button"
+                  size="sm"
+                  variant={sourceFilter === source ? "default" : "outline"}
+                  onClick={() => onSourceFilterChange(source)}
+                >
+                  {sourceLabel[source]}
+                </Button>
+              ))}
+            </div>
+          </FilterPill>
 
-            <SheetContent side="right" className="w-full sm:max-w-2xl">
-              <div className="flex h-full min-h-0 flex-col">
-                <SheetHeader>
-                  <SheetTitle className="flex items-center gap-2">
-                    Filters
-                    {activeFilterCount > 0 && (
-                      <span className="inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-primary/20 px-1 text-[11px] font-semibold tabular-nums text-primary">
-                        {activeFilterCount}
-                      </span>
-                    )}
-                  </SheetTitle>
-                  <SheetDescription>
-                    Use the right-side filter panel to refine jobs across every
-                    tab.
-                  </SheetDescription>
-                </SheetHeader>
+          <FilterPill
+            icon={<Clock />}
+            label="Posted"
+            active={postedWithinDays != null}
+            summary={postedWithinLabel}
+          >
+            <div className="flex flex-wrap gap-2">
+              {postedWithinOptions.map((option) => (
+                <Button
+                  key={option.value}
+                  type="button"
+                  size="sm"
+                  variant={
+                    postedWithinDays === option.value ? "default" : "outline"
+                  }
+                  onClick={() =>
+                    onPostedWithinChange(
+                      postedWithinDays === option.value ? null : option.value,
+                    )
+                  }
+                >
+                  {option.label}
+                </Button>
+              ))}
+            </div>
+          </FilterPill>
 
-                <Separator className="my-4" />
+          <FilterPill
+            icon={<Briefcase />}
+            label="Employment"
+            active={employmentTypes.length > 0}
+            badge={employmentTypes.length}
+          >
+            <div className="space-y-2">
+              {employmentTypeOptions.map((option) => {
+                const checked = employmentTypes.includes(option.value);
+                const inputId = `employment-${option.value}`;
+                return (
+                  <label
+                    key={option.value}
+                    htmlFor={inputId}
+                    className="flex cursor-pointer items-center gap-2 text-sm"
+                  >
+                    <Checkbox
+                      id={inputId}
+                      checked={checked}
+                      onCheckedChange={(next) => {
+                        const isChecked = next === true;
+                        onEmploymentTypesChange(
+                          isChecked
+                            ? [...employmentTypes, option.value]
+                            : employmentTypes.filter(
+                                (type) => type !== option.value,
+                              ),
+                        );
+                      }}
+                    />
+                    <span>{option.label}</span>
+                  </label>
+                );
+              })}
+            </div>
+          </FilterPill>
 
-                <div className="min-h-0 flex-1 space-y-4 overflow-y-auto pr-1">
-                  <Card>
-                    <CardHeader className="pb-3">
-                      <CardTitle>Sources</CardTitle>
-                    </CardHeader>
-                    <CardContent className="flex flex-wrap gap-2">
+          <FilterPill
+            icon={<CalendarDays />}
+            label="Dates"
+            active={dateFilter.dimensions.length > 0}
+            badge={dateFilter.dimensions.length}
+            contentClassName="w-80"
+          >
+            <div className="space-y-3">
+              <div className="flex flex-wrap gap-2">
+                {dateFilterDimensionOrder.map((dimension) => (
+                  <Button
+                    key={dimension}
+                    type="button"
+                    size="sm"
+                    variant={
+                      dateFilter.dimensions.includes(dimension)
+                        ? "default"
+                        : "outline"
+                    }
+                    onClick={() =>
+                      onDateFilterChange(toggleDimension(dateFilter, dimension))
+                    }
+                  >
+                    {dateFilterDimensionLabels[dimension]}
+                  </Button>
+                ))}
+              </div>
+
+              {dateFilter.dimensions.length > 0 && (
+                <>
+                  <div className="flex flex-wrap gap-2">
+                    {datePresetOptions.map((option) => (
                       <Button
+                        key={option.value}
                         type="button"
                         size="sm"
-                        variant={sourceFilter === "all" ? "default" : "outline"}
-                        onClick={() => onSourceFilterChange("all")}
-                      >
-                        All sources
-                      </Button>
-                      {visibleSources.map((source) => (
-                        <Button
-                          key={source}
-                          type="button"
-                          size="sm"
-                          variant={
-                            sourceFilter === source ? "default" : "outline"
-                          }
-                          onClick={() => onSourceFilterChange(source)}
-                        >
-                          {sourceLabel[source]}
-                        </Button>
-                      ))}
-                    </CardContent>
-                  </Card>
-
-                  <Card>
-                    <CardHeader className="pb-3">
-                      <CardTitle>Dates</CardTitle>
-                    </CardHeader>
-                    <CardContent className="space-y-3">
-                      <div className="flex flex-wrap gap-2">
-                        {dateFilterDimensionOrder.map((dimension) => (
-                          <Button
-                            key={dimension}
-                            type="button"
-                            size="sm"
-                            variant={
-                              dateFilter.dimensions.includes(dimension)
-                                ? "default"
-                                : "outline"
-                            }
-                            onClick={() =>
-                              onDateFilterChange(
-                                toggleDimension(dateFilter, dimension),
-                              )
-                            }
-                          >
-                            {dateFilterDimensionLabels[dimension]}
-                          </Button>
-                        ))}
-                      </div>
-
-                      {dateFilter.dimensions.length > 0 && (
-                        <>
-                          <div className="flex flex-wrap gap-2">
-                            {datePresetOptions.map((option) => (
-                              <Button
-                                key={option.value}
-                                type="button"
-                                size="sm"
-                                variant={
-                                  dateFilter.preset === option.value
-                                    ? "default"
-                                    : "outline"
-                                }
-                                onClick={() =>
-                                  onDateFilterChange({
-                                    ...dateFilter,
-                                    preset: option.value,
-                                    ...getDateRangeForPreset(option.value),
-                                  })
-                                }
-                              >
-                                Last {option.label}
-                              </Button>
-                            ))}
-                          </div>
-
-                          <div className="grid gap-3 md:grid-cols-2">
-                            <div className="space-y-1">
-                              <Label htmlFor="date-start-filter">
-                                Start date
-                              </Label>
-                              <Input
-                                id="date-start-filter"
-                                type="date"
-                                value={dateFilter.startDate ?? ""}
-                                onChange={(event) =>
-                                  onDateFilterChange({
-                                    ...dateFilter,
-                                    startDate: event.target.value || null,
-                                    preset: "custom",
-                                  })
-                                }
-                              />
-                            </div>
-
-                            <div className="space-y-1">
-                              <Label htmlFor="date-end-filter">End date</Label>
-                              <Input
-                                id="date-end-filter"
-                                type="date"
-                                value={dateFilter.endDate ?? ""}
-                                onChange={(event) =>
-                                  onDateFilterChange({
-                                    ...dateFilter,
-                                    endDate: event.target.value || null,
-                                    preset: "custom",
-                                  })
-                                }
-                              />
-                            </div>
-                          </div>
-
-                          <div>
-                            <Button
-                              type="button"
-                              size="sm"
-                              variant="outline"
-                              onClick={() =>
-                                onDateFilterChange({
-                                  dimensions: [],
-                                  startDate: null,
-                                  endDate: null,
-                                  preset: null,
-                                })
-                              }
-                            >
-                              Clear date filters
-                            </Button>
-                          </div>
-                        </>
-                      )}
-                    </CardContent>
-                  </Card>
-
-                  <Card>
-                    <CardHeader className="pb-3">
-                      <CardTitle>Sponsor status</CardTitle>
-                    </CardHeader>
-                    <CardContent className="flex flex-wrap gap-2">
-                      {sponsorOptions.map((option) => (
-                        <Button
-                          key={option.value}
-                          type="button"
-                          size="sm"
-                          variant={
-                            sponsorFilter === option.value
-                              ? "default"
-                              : "outline"
-                          }
-                          onClick={() => onSponsorFilterChange(option.value)}
-                        >
-                          {option.label}
-                        </Button>
-                      ))}
-                    </CardContent>
-                  </Card>
-
-                  <Card>
-                    <CardHeader className="pb-3">
-                      <CardTitle>Salary</CardTitle>
-                    </CardHeader>
-                    <CardContent className="space-y-3">
-                      <div className="flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
-                        <span>Salary is</span>
-                        <Select
-                          value={salaryFilter.mode}
-                          onValueChange={(value) => {
-                            const nextMode = value as SalaryFilterMode;
-                            if (nextMode === "at_least") {
-                              onSalaryFilterChange({
-                                mode: nextMode,
-                                min: salaryFilter.min,
-                                max: null,
-                              });
-                              return;
-                            }
-                            if (nextMode === "at_most") {
-                              onSalaryFilterChange({
-                                mode: nextMode,
-                                min: null,
-                                max: salaryFilter.max,
-                              });
-                              return;
-                            }
-                            onSalaryFilterChange({
-                              mode: nextMode,
-                              min: salaryFilter.min,
-                              max: salaryFilter.max,
-                            });
-                          }}
-                        >
-                          <SelectTrigger
-                            id="salary-mode"
-                            aria-label="Salary range specifier"
-                            className="h-8 w-[170px] text-foreground"
-                          >
-                            <SelectValue />
-                          </SelectTrigger>
-                          <SelectContent>
-                            {salaryModeOptions.map((option) => (
-                              <SelectItem
-                                key={option.value}
-                                value={option.value}
-                              >
-                                {option.label}
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                      </div>
-
-                      <div
-                        className={
-                          showSalaryMin && showSalaryMax
-                            ? "grid gap-3 md:grid-cols-2"
-                            : "space-y-3"
+                        variant={
+                          dateFilter.preset === option.value
+                            ? "default"
+                            : "outline"
+                        }
+                        onClick={() =>
+                          onDateFilterChange({
+                            ...dateFilter,
+                            preset: option.value,
+                            ...getDateRangeForPreset(option.value),
+                          })
                         }
                       >
-                        {showSalaryMin && (
-                          <div className="space-y-1">
-                            <Label htmlFor="salary-min-filter">Minimum</Label>
-                            <Input
-                              id="salary-min-filter"
-                              value={
-                                salaryFilter.min == null
-                                  ? ""
-                                  : String(salaryFilter.min)
-                              }
-                              onChange={(event) => {
-                                const raw = event.target.value.trim();
-                                const parsed = Number.parseInt(raw, 10);
-                                onSalaryFilterChange({
-                                  ...salaryFilter,
-                                  min:
-                                    Number.isFinite(parsed) && parsed > 0
-                                      ? parsed
-                                      : null,
-                                });
-                              }}
-                              inputMode="numeric"
-                              placeholder="e.g. 60000"
-                            />
-                          </div>
-                        )}
+                        Last {option.label}
+                      </Button>
+                    ))}
+                  </div>
 
-                        {showSalaryMax && (
-                          <div className="space-y-1">
-                            <Label htmlFor="salary-max-filter">Maximum</Label>
-                            <Input
-                              id="salary-max-filter"
-                              value={
-                                salaryFilter.max == null
-                                  ? ""
-                                  : String(salaryFilter.max)
-                              }
-                              onChange={(event) => {
-                                const raw = event.target.value.trim();
-                                const parsed = Number.parseInt(raw, 10);
-                                onSalaryFilterChange({
-                                  ...salaryFilter,
-                                  max:
-                                    Number.isFinite(parsed) && parsed > 0
-                                      ? parsed
-                                      : null,
-                                });
-                              }}
-                              inputMode="numeric"
-                              placeholder="e.g. 100000"
-                            />
-                          </div>
-                        )}
-                      </div>
-                    </CardContent>
-                  </Card>
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    <div className="space-y-1">
+                      <Label htmlFor="date-start-filter">Start date</Label>
+                      <Input
+                        id="date-start-filter"
+                        type="date"
+                        value={dateFilter.startDate ?? ""}
+                        onChange={(event) =>
+                          onDateFilterChange({
+                            ...dateFilter,
+                            startDate: event.target.value || null,
+                            preset: "custom",
+                          })
+                        }
+                      />
+                    </div>
 
-                  <Card>
-                    <CardHeader className="pb-3">
-                      <CardTitle>Sort</CardTitle>
-                    </CardHeader>
-                    <CardContent className="space-y-3">
-                      <div className="flex flex-col gap-2 text-sm text-muted-foreground sm:flex-row sm:flex-wrap sm:items-center">
-                        <div className="flex items-center gap-2">
-                          <span className="whitespace-nowrap">Sort by</span>
-                          <Select
-                            value={sort.key}
-                            onValueChange={(value) =>
-                              applySortChange({
-                                key: value as JobSort["key"],
-                                direction:
-                                  defaultSortDirection[value as JobSort["key"]],
-                              })
-                            }
-                          >
-                            <SelectTrigger
-                              id="sort-key"
-                              aria-label="Sort field"
-                              className="h-8 flex-1 sm:w-[180px] text-foreground"
-                            >
-                              <SelectValue
-                                placeholder={sortFieldLabels[sort.key]}
-                              />
-                            </SelectTrigger>
-                            <SelectContent>
-                              {sortFieldOrder.map((key) => (
-                                <SelectItem key={key} value={key}>
-                                  {sortFieldLabels[key]}
-                                </SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
-                        </div>
+                    <div className="space-y-1">
+                      <Label htmlFor="date-end-filter">End date</Label>
+                      <Input
+                        id="date-end-filter"
+                        type="date"
+                        value={dateFilter.endDate ?? ""}
+                        onChange={(event) =>
+                          onDateFilterChange({
+                            ...dateFilter,
+                            endDate: event.target.value || null,
+                            preset: "custom",
+                          })
+                        }
+                      />
+                    </div>
+                  </div>
 
-                        <div className="flex items-center gap-2">
-                          <span className="whitespace-nowrap">and</span>
-                          <Select
-                            value={sort.direction}
-                            onValueChange={(value) =>
-                              applySortChange({
-                                ...sort,
-                                direction: value as JobSort["direction"],
-                              })
-                            }
-                          >
-                            <SelectTrigger
-                              id="sort-direction"
-                              aria-label="Sort order"
-                              className="h-8 flex-1 sm:w-[180px] text-foreground"
-                            >
-                              <SelectValue
-                                placeholder={
-                                  getDirectionOptions(sort.key).find(
-                                    (option) => option.value === sort.direction,
-                                  )?.label
-                                }
-                              />
-                            </SelectTrigger>
-                            <SelectContent>
-                              {getDirectionOptions(sort.key).map((option) => (
-                                <SelectItem
-                                  key={option.value}
-                                  value={option.value}
-                                >
-                                  {option.label}
-                                </SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
-                        </div>
-                      </div>
-                    </CardContent>
-                  </Card>
-                </div>
-
-                <div className="mt-3 flex shrink-0 items-center justify-between border-t border-border/60 bg-background pt-3">
                   <Button
                     type="button"
+                    size="sm"
                     variant="outline"
-                    onClick={onResetFilters}
+                    onClick={clearDateFilter}
                   >
-                    Reset
+                    Clear date filters
                   </Button>
-                  <Button
-                    type="button"
-                    onClick={() => onFiltersOpenChange?.(false)}
+                </>
+              )}
+            </div>
+          </FilterPill>
+
+          <FilterPill
+            icon={<BadgeCheck />}
+            label="Sponsor"
+            active={sponsorFilter !== "all"}
+            summary={sponsorLabel}
+            contentClassName="w-72"
+          >
+            <div className="flex flex-wrap gap-2">
+              {sponsorOptions.map((option) => (
+                <Button
+                  key={option.value}
+                  type="button"
+                  size="sm"
+                  variant={
+                    sponsorFilter === option.value ? "default" : "outline"
+                  }
+                  onClick={() => onSponsorFilterChange(option.value)}
+                >
+                  {option.label}
+                </Button>
+              ))}
+            </div>
+          </FilterPill>
+
+          <FilterPill
+            icon={<Banknote />}
+            label="Salary"
+            active={salaryActive}
+            summary={salarySummary}
+          >
+            <div className="space-y-3">
+              <div className="flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
+                <span>Salary is</span>
+                <Select
+                  value={salaryFilter.mode}
+                  onValueChange={(value) => {
+                    const nextMode = value as SalaryFilterMode;
+                    if (nextMode === "at_least") {
+                      onSalaryFilterChange({
+                        mode: nextMode,
+                        min: salaryFilter.min,
+                        max: null,
+                      });
+                      return;
+                    }
+                    if (nextMode === "at_most") {
+                      onSalaryFilterChange({
+                        mode: nextMode,
+                        min: null,
+                        max: salaryFilter.max,
+                      });
+                      return;
+                    }
+                    onSalaryFilterChange({
+                      mode: nextMode,
+                      min: salaryFilter.min,
+                      max: salaryFilter.max,
+                    });
+                  }}
+                >
+                  <SelectTrigger
+                    id="salary-mode"
+                    aria-label="Salary range specifier"
+                    className="h-8 w-[140px] text-foreground"
                   >
-                    Show {filteredCount.toLocaleString()}{" "}
-                    {filteredCount === 1 ? "job" : "jobs"}
-                  </Button>
-                </div>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {salaryModeOptions.map((option) => (
+                      <SelectItem key={option.value} value={option.value}>
+                        {option.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
               </div>
-            </SheetContent>
-          </Sheet>
+
+              <div className="grid gap-3 sm:grid-cols-2">
+                {showSalaryMin && (
+                  <div className="space-y-1">
+                    <Label htmlFor="salary-min-filter">Minimum</Label>
+                    <Input
+                      id="salary-min-filter"
+                      value={
+                        salaryFilter.min == null ? "" : String(salaryFilter.min)
+                      }
+                      onChange={(event) => {
+                        const raw = event.target.value.trim();
+                        const parsed = Number.parseInt(raw, 10);
+                        onSalaryFilterChange({
+                          ...salaryFilter,
+                          min:
+                            Number.isFinite(parsed) && parsed > 0
+                              ? parsed
+                              : null,
+                        });
+                      }}
+                      inputMode="numeric"
+                      placeholder="e.g. 60000"
+                    />
+                  </div>
+                )}
+
+                {showSalaryMax && (
+                  <div className="space-y-1">
+                    <Label htmlFor="salary-max-filter">Maximum</Label>
+                    <Input
+                      id="salary-max-filter"
+                      value={
+                        salaryFilter.max == null ? "" : String(salaryFilter.max)
+                      }
+                      onChange={(event) => {
+                        const raw = event.target.value.trim();
+                        const parsed = Number.parseInt(raw, 10);
+                        onSalaryFilterChange({
+                          ...salaryFilter,
+                          max:
+                            Number.isFinite(parsed) && parsed > 0
+                              ? parsed
+                              : null,
+                        });
+                      }}
+                      inputMode="numeric"
+                      placeholder="e.g. 100000"
+                    />
+                  </div>
+                )}
+              </div>
+            </div>
+          </FilterPill>
+
+          <span className="mx-1 h-6 w-px bg-border" aria-hidden="true" />
+
+          <FilterPill
+            icon={<ArrowDownUp />}
+            label="Sort"
+            active={false}
+            summary={`${sortFieldLabels[sort.key]}${
+              sortDirectionLabel ? ` · ${sortDirectionLabel}` : ""
+            }`}
+            contentClassName="w-64"
+          >
+            <div className="space-y-3 text-sm text-muted-foreground">
+              <div className="space-y-1">
+                <span>Sort by</span>
+                <Select
+                  value={sort.key}
+                  onValueChange={(value) =>
+                    applySortChange({
+                      key: value as JobSort["key"],
+                      direction: defaultSortDirection[value as JobSort["key"]],
+                    })
+                  }
+                >
+                  <SelectTrigger
+                    id="sort-key"
+                    aria-label="Sort field"
+                    className="h-8 w-full text-foreground"
+                  >
+                    <SelectValue placeholder={sortFieldLabels[sort.key]} />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {sortFieldOrder.map((key) => (
+                      <SelectItem key={key} value={key}>
+                        {sortFieldLabels[key]}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <div className="space-y-1">
+                <span>Direction</span>
+                <Select
+                  value={sort.direction}
+                  onValueChange={(value) =>
+                    applySortChange({
+                      ...sort,
+                      direction: value as JobSort["direction"],
+                    })
+                  }
+                >
+                  <SelectTrigger
+                    id="sort-direction"
+                    aria-label="Sort order"
+                    className="h-8 w-full text-foreground"
+                  >
+                    <SelectValue placeholder={sortDirectionLabel} />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {getDirectionOptions(sort.key).map((option) => (
+                      <SelectItem key={option.value} value={option.value}>
+                        {option.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+          </FilterPill>
+
+          {activeFilterCount > 0 && (
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              onClick={onResetFilters}
+              className="h-9 gap-1.5 text-xs text-muted-foreground hover:text-foreground"
+            >
+              <RotateCcw className="h-3.5 w-3.5" />
+              Reset
+            </Button>
+          )}
         </div>
+
+        {/* Row 3: active filter chips */}
+        {activeChips.length > 0 && (
+          <div className="flex flex-wrap items-center gap-1.5">
+            <span className="text-xs text-muted-foreground">Active:</span>
+            {activeChips.map((chip) => (
+              <Badge
+                key={chip.id}
+                variant="secondary"
+                className="gap-1 py-1 pl-2.5 pr-1 font-normal"
+              >
+                {chip.label}
+                <button
+                  type="button"
+                  aria-label={`Remove ${chip.label} filter`}
+                  onClick={chip.onRemove}
+                  className="rounded-full p-0.5 text-muted-foreground hover:bg-background/60 hover:text-foreground"
+                >
+                  <X className="h-3 w-3" />
+                </button>
+              </Badge>
+            ))}
+            <button
+              type="button"
+              onClick={onResetFilters}
+              className="ml-1 text-xs font-medium text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
+            >
+              Clear all
+            </button>
+          </div>
+        )}
       </div>
     </Tabs>
   );
