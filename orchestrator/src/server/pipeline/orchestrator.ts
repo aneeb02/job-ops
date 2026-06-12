@@ -12,7 +12,7 @@ import type { AppErrorCode } from "@infra/errors";
 import { logger } from "@infra/logger";
 import { trackServerProductEvent } from "@infra/product-analytics";
 import { runWithRequestContext } from "@infra/request-context";
-import { getActiveTenantId } from "@server/tenancy/context";
+import { getPrivateDataScope } from "@server/tenancy/private-scope";
 import { createLocationIntentFromLegacyInputs } from "@shared/location-domain.js";
 import type {
   JobStatus,
@@ -68,6 +68,19 @@ const DEFAULT_CONFIG: PipelineConfig = {
   enableAutoTailoring: true,
 };
 
+function parseProjectIdsCsv(value: string | null | undefined): string[] {
+  if (!value) return [];
+  const seen = new Set<string>();
+  const ids: string[] = [];
+  for (const rawId of value.split(",")) {
+    const id = rawId.trim();
+    if (!id || seen.has(id)) continue;
+    seen.add(id);
+    ids.push(id);
+  }
+  return ids;
+}
+
 type TenantPipelineState = {
   isRunning: boolean;
   activePipelineRunId: string | null;
@@ -87,8 +100,14 @@ type LlmConfigState = {
 
 const pipelineStateByTenant = new Map<string, TenantPipelineState>();
 
-function getPipelineState(tenantId = getActiveTenantId()): TenantPipelineState {
-  let state = pipelineStateByTenant.get(tenantId);
+function getPipelineScopeKey(): string {
+  return getPrivateDataScope().scopeKey;
+}
+
+function getPipelineState(
+  scopeKey = getPipelineScopeKey(),
+): TenantPipelineState {
+  let state = pipelineStateByTenant.get(scopeKey);
   if (!state) {
     state = {
       isRunning: false,
@@ -97,7 +116,7 @@ function getPipelineState(tenantId = getActiveTenantId()): TenantPipelineState {
       activeChallengeState: null,
       activeLlmConfigState: null,
     };
-    pipelineStateByTenant.set(tenantId, state);
+    pipelineStateByTenant.set(scopeKey, state);
   }
   return state;
 }
@@ -202,8 +221,8 @@ class PipelineCancelledError extends Error {
   }
 }
 
-function ensureNotCancelled(tenantId = getActiveTenantId()): void {
-  if (getPipelineState(tenantId).cancelRequestedAt) {
+function ensureNotCancelled(scopeKey = getPipelineScopeKey()): void {
+  if (getPipelineState(scopeKey).cancelRequestedAt) {
     throw new PipelineCancelledError();
   }
 }
@@ -236,8 +255,8 @@ export async function runPipeline(
   jobsProcessed: number;
   error?: string;
 }> {
-  const tenantId = getActiveTenantId();
-  const tenantState = getPipelineState(tenantId);
+  const scopeKey = getPipelineScopeKey();
+  const tenantState = getPipelineState(scopeKey);
   if (tenantState.isRunning) {
     return {
       success: false,
@@ -295,18 +314,18 @@ export async function runPipeline(
     });
 
     try {
-      ensureNotCancelled(tenantId);
+      ensureNotCancelled(scopeKey);
       await persistResultSummary({ stage: "started" });
       const profile = await loadProfileStep();
       await persistResultSummary({ stage: "profile_loaded" });
 
-      ensureNotCancelled(tenantId);
+      ensureNotCancelled(scopeKey);
       await persistResultSummary({ stage: "discovery" });
       let { discoveredJobs, sourceErrors, pendingChallenges } =
         await discoverJobsStep({
           mergedConfig,
           shouldCancel: () =>
-            getPipelineState(tenantId).cancelRequestedAt !== null,
+            getPipelineState(scopeKey).cancelRequestedAt !== null,
         });
       await persistResultSummary({
         stage: "discovery",
@@ -341,7 +360,7 @@ export async function runPipeline(
         });
         tenantState.activeChallengeState = null;
 
-        ensureNotCancelled(tenantId);
+        ensureNotCancelled(scopeKey);
 
         // Re-run only the extractors that had challenges
         pipelineLogger.info("Challenges resolved, re-running extractors", {
@@ -353,7 +372,7 @@ export async function runPipeline(
           mergedConfig: retryConfig,
           includeWatchlist: false,
           shouldCancel: () =>
-            getPipelineState(tenantId).cancelRequestedAt !== null,
+            getPipelineState(scopeKey).cancelRequestedAt !== null,
         });
 
         discoveredJobs = [...discoveredJobs, ...retryResult.discoveredJobs];
@@ -385,7 +404,7 @@ export async function runPipeline(
         progressHelpers.crawlingComplete(discoveredJobs.length);
       }
 
-      ensureNotCancelled(tenantId);
+      ensureNotCancelled(scopeKey);
       jobsDiscovered = discoveredJobs.length;
       const { created, skipped, fuzzyMerged } = await importJobsStep({
         discoveredJobs,
@@ -399,13 +418,13 @@ export async function runPipeline(
       let unprocessedJobs: import("@shared/types").Job[] = [];
       let scoredJobs: import("./steps/types").ScoredJob[] = [];
 
-      ensureNotCancelled(tenantId);
+      ensureNotCancelled(scopeKey);
       await persistResultSummary({ stage: "scoring" });
       try {
         ({ unprocessedJobs, scoredJobs } = await scoreJobsStep({
           profile,
           shouldCancel: () =>
-            getPipelineState(tenantId).cancelRequestedAt !== null,
+            getPipelineState(scopeKey).cancelRequestedAt !== null,
         }));
       } catch (error) {
         if (error instanceof LlmNotConfiguredError) {
@@ -418,14 +437,14 @@ export async function runPipeline(
           });
           tenantState.activeLlmConfigState = null;
 
-          ensureNotCancelled(tenantId);
+          ensureNotCancelled(scopeKey);
 
           pipelineLogger.info("LLM configured, resuming scoring");
 
           ({ unprocessedJobs, scoredJobs } = await scoreJobsStep({
             profile,
             shouldCancel: () =>
-              getPipelineState(tenantId).cancelRequestedAt !== null,
+              getPipelineState(scopeKey).cancelRequestedAt !== null,
           }));
         } else {
           throw error;
@@ -436,7 +455,7 @@ export async function runPipeline(
         jobsScored: scoredJobs.length,
       });
 
-      ensureNotCancelled(tenantId);
+      ensureNotCancelled(scopeKey);
       await persistResultSummary({ stage: "selection" });
       const jobsToProcess = await selectJobsStep({
         scoredJobs,
@@ -461,7 +480,7 @@ export async function runPipeline(
         jobsToProcess,
         processJob,
         shouldCancel: () =>
-          getPipelineState(tenantId).cancelRequestedAt !== null,
+          getPipelineState(scopeKey).cancelRequestedAt !== null,
       });
       jobsProcessed = processedCount;
 
@@ -634,9 +653,10 @@ export async function summarizeJob(
 
       // 2. Suggest Projects
       let selectedProjectIds = job.selectedProjectIds;
-      if (shouldUpdateAllTailoring && (!selectedProjectIds || options?.force)) {
-        jobLogger.info("Selecting projects");
+      if (shouldUpdateAllTailoring) {
         try {
+          const existingSelectedProjectIds =
+            parseProjectIdsCsv(selectedProjectIds);
           const { catalog, selectionItems } =
             extractProjectsFromProfile(profile);
           const overrideResumeProjectsRaw =
@@ -655,16 +675,38 @@ export async function summarizeJob(
           const eligibleProjects = selectionItems.filter((p) =>
             eligibleSet.has(p.id),
           );
+          const allowedProjectIds = new Set([
+            ...locked,
+            ...eligibleProjects.map((project) => project.id),
+          ]);
+          const missingLockedProjectIds = locked.filter(
+            (id) => !existingSelectedProjectIds.includes(id),
+          );
+          const disallowedExistingProjectIds =
+            existingSelectedProjectIds.filter(
+              (id) => !allowedProjectIds.has(id),
+            );
+          const existingSelectionExceedsMax =
+            existingSelectedProjectIds.length > resumeProjects.maxProjects;
+          const existingSelectionValid =
+            existingSelectedProjectIds.length > 0 &&
+            disallowedExistingProjectIds.length === 0 &&
+            missingLockedProjectIds.length === 0 &&
+            !existingSelectionExceedsMax;
 
-          const picked = await pickProjectIdsForJob({
-            jobDescription: job.jobDescription || "",
-            eligibleProjects,
-            desiredCount,
-          });
+          if (existingSelectionValid && !options?.force) {
+            selectedProjectIds = existingSelectedProjectIds.join(",");
+          } else {
+            const picked = await pickProjectIdsForJob({
+              jobDescription: job.jobDescription || "",
+              eligibleProjects,
+              desiredCount,
+            });
 
-          selectedProjectIds = [...locked, ...picked].join(",");
+            selectedProjectIds = [...locked, ...picked].join(",");
+          }
         } catch (error) {
-          jobLogger.warn("Failed to suggest projects", error);
+          jobLogger.warn("Failed to suggest projects", { error });
         }
       }
 
