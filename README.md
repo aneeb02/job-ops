@@ -130,6 +130,12 @@ Don't want to self-host? JobOps Cloud gives you your own hosted instance with no
 
 </div>
 
+Hosted instances may enforce per-user monthly quotas for expensive actions
+such as searches, AI tailoring, Ghostwriter generations, and PDF exports. When a
+hosted quota is exhausted, the action is blocked with a clear API error; local
+self-hosted/default mode is unaffected unless hosted quotas are explicitly
+enabled.
+
 Self-hosted will always be free and open source.
 
 ---
@@ -196,7 +202,5 @@ You can self-host, use, and modify JobOps freely. You cannot sell the software i
 Built by [Shaheer Sarfaraz](https://github.com/DaKheera47)
 
 [Website](https://jobops.app) · [Cloud](https://jobops.app) · [Documentation](https://jobops.dakheera47.com/docs/) · [Ko-fi](https://ko-fi.com/shaheersarfaraz)
-
-heylol 
 
 </div>
